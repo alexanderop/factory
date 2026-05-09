@@ -2,7 +2,7 @@ node_modules
 dist
 .tsbuildinfo
 *.tsbuildinfo
-.factory/runs
+**/.factory/runs/
 .env
 .env.*
 !.env.example
