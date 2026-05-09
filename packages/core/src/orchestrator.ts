@@ -6,6 +6,7 @@ import {
 	PrdLoadError,
 	StepIdleTimeoutError,
 	StepMaxItersError,
+	UnsupportedPermissionError,
 	type FactoryError,
 	type HarnessSpawnError,
 	type RunRecordingError,
@@ -24,6 +25,7 @@ import type {
 	FactoryOptions,
 	Harness,
 	LoadedStep,
+	PermissionMode,
 	RunOptions,
 	StepEntry,
 	StepOptions,
@@ -40,7 +42,22 @@ interface RunStepArgs {
 	readonly cwd: string;
 	readonly prd: string;
 	readonly idleTimeoutMs?: number;
+	readonly permissions: PermissionMode;
 }
+
+const resolvePermissions = (
+	cliMode: PermissionMode | undefined,
+	step: LoadedStep,
+	stepOpts: StepOptions,
+	pipeline: FactoryOptions,
+	harness: Harness,
+): PermissionMode =>
+	cliMode ??
+	stepOpts.permissions ??
+	step.frontmatter.permissions ??
+	pipeline.permissions ??
+	harness.defaultPermissions ??
+	'prompt';
 
 const resolvePrdContent = (prd: string, cwd: string) =>
 	Effect.gen(function* () {
@@ -176,6 +193,7 @@ const runStep = (
 			cwd,
 			prd,
 			idleTimeoutMs,
+			permissions,
 		} = args;
 
 		const maxIters = options.maxIters ?? loaded.frontmatter.maxIters ?? 1;
@@ -204,7 +222,7 @@ const runStep = (
 			const lastResult = yield* streamHarnessIter({
 				harness,
 				harnessName,
-				opts: { prompt: fullPrompt, cwd, idleTimeoutMs },
+				opts: { prompt: fullPrompt, cwd, idleTimeoutMs, permissions },
 				stepId,
 				stepOrd,
 				n: i,
@@ -318,6 +336,23 @@ export const runFactoryEffect = (
 					);
 				}
 				const harness = yield* registry.resolve(harnessName);
+				const permissions = resolvePermissions(
+					runOpts.permissions,
+					loaded,
+					entry.options,
+					factoryOpts,
+					harness,
+				);
+				if (!harness.supports.includes(permissions)) {
+					return yield* Effect.fail(
+						new UnsupportedPermissionError({
+							message: `harness '${harnessName}' does not support permission mode '${permissions}' (supported: ${harness.supports.join(', ') || '(none)'})`,
+							harness: harnessName,
+							requested: permissions,
+							supported: harness.supports,
+						}),
+					);
+				}
 				yield* runStep({
 					runId,
 					stepOrd: ord,
@@ -329,6 +364,7 @@ export const runFactoryEffect = (
 					cwd,
 					prd,
 					idleTimeoutMs: runOpts.idleTimeoutMs,
+					permissions,
 				});
 			}
 		});

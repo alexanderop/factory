@@ -10,6 +10,7 @@ export {
 	StepIdleTimeoutError,
 	StepLoadError,
 	StepMaxItersError,
+	UnsupportedPermissionError,
 	UntilEvalError,
 } from './errors.ts';
 export { factory } from './factory.ts';
@@ -62,6 +63,7 @@ export {
 	type UntilEvaluatorService,
 } from './services/UntilEvaluator.ts';
 export { createSubprocessHarness, type SubprocessHarnessConfig } from './subprocess.ts';
+export { PermissionMode } from './types.ts';
 export type {
 	ExecOpts,
 	ExecResult,

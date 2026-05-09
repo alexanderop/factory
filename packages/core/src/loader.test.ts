@@ -66,6 +66,38 @@ describe('StepLoader', () => {
 			expect(loaded.prompt).toBe('Plan body.');
 		});
 
+		it('parses permissions frontmatter values', async () => {
+			const map = new Map([
+				['./steps/plan.md', '---\nname: plan\npermissions: read-only\n---\nPlan body.'],
+			]);
+
+			const program = Effect.gen(function* () {
+				const loader = yield* StepLoader;
+				return yield* loader.load('./steps/plan.md', '/irrelevant');
+			}).pipe(Effect.provide(InMemoryStepLoader.layer(map)));
+
+			const loaded = await Effect.runPromise(program);
+			expect(loaded.frontmatter.permissions).toBe('read-only');
+		});
+
+		it('rejects invalid permissions values with a schema error', async () => {
+			const map = new Map([
+				['./steps/plan.md', '---\nname: plan\npermissions: yolo\n---\nPlan body.'],
+			]);
+
+			const program = Effect.gen(function* () {
+				const loader = yield* StepLoader;
+				return yield* loader.load('./steps/plan.md', '/irrelevant');
+			}).pipe(Effect.provide(InMemoryStepLoader.layer(map)));
+
+			const exit = await Effect.runPromiseExit(program);
+			expect(Exit.isFailure(exit)).toBe(true);
+			if (Exit.isFailure(exit)) {
+				const failure = Cause.failureOption(exit.cause);
+				expect(failure._tag === 'Some' && failure.value instanceof StepLoadError).toBe(true);
+			}
+		});
+
 		it('fails with StepLoadError for unknown sources', async () => {
 			const program = Effect.gen(function* () {
 				const loader = yield* StepLoader;

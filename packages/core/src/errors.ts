@@ -1,5 +1,6 @@
 import { Data } from 'effect';
 import type { HarnessName, StepId } from './ids.ts';
+import type { PermissionMode } from './types.ts';
 
 /** Reading or parsing a step markdown file failed. */
 export class StepLoadError extends Data.TaggedError('StepLoadError')<{
@@ -74,6 +75,14 @@ export class RunRecordingError extends Data.TaggedError('RunRecordingError')<{
 	readonly path?: string;
 }> {}
 
+/** Resolved permission mode is not in the chosen harness's `supports` list. */
+export class UnsupportedPermissionError extends Data.TaggedError('UnsupportedPermissionError')<{
+	readonly message: string;
+	readonly harness: HarnessName;
+	readonly requested: PermissionMode;
+	readonly supported: ReadonlyArray<PermissionMode>;
+}> {}
+
 export type FactoryError =
 	| StepLoadError
 	| HarnessNotFoundError
@@ -85,4 +94,5 @@ export type FactoryError =
 	| MissingHarnessError
 	| PrdLoadError
 	| ConfigLoadError
-	| RunRecordingError;
+	| RunRecordingError
+	| UnsupportedPermissionError;

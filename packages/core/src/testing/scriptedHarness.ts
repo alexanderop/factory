@@ -1,13 +1,21 @@
 import { Effect, Stream } from 'effect';
 import { HarnessExecError } from '../errors.ts';
 import { HarnessName } from '../ids.ts';
-import type { ExecOpts, ExecResult, Harness, HarnessEvent } from '../types.ts';
+import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from '../types.ts';
 
 export interface ScriptedResponse {
 	readonly stdout?: string;
 	readonly stderr?: string;
 	readonly exitCode?: number;
 }
+
+export interface ScriptedHarnessOptions {
+	readonly supports?: ReadonlyArray<PermissionMode>;
+	readonly defaultPermissions?: PermissionMode;
+	readonly onCall?: (opts: ExecOpts) => void;
+}
+
+const ALL_MODES: ReadonlyArray<PermissionMode> = ['skip', 'accept-edits', 'read-only', 'prompt'];
 
 /**
  * Test double for `Harness`. Cycles through `responses` on each `exec`/`stream`
@@ -16,6 +24,7 @@ export interface ScriptedResponse {
 export const scriptedHarness = <Name extends string>(
 	name: Name,
 	responses: ReadonlyArray<ScriptedResponse>,
+	options: ScriptedHarnessOptions = {},
 ): Harness<Name> => {
 	let cursor = 0;
 	const next = (): ScriptedResponse => {
@@ -26,8 +35,11 @@ export const scriptedHarness = <Name extends string>(
 
 	return {
 		name,
-		exec: (_opts: ExecOpts) =>
+		supports: options.supports ?? ALL_MODES,
+		defaultPermissions: options.defaultPermissions,
+		exec: (opts: ExecOpts) =>
 			Effect.gen(function* () {
+				options.onCall?.(opts);
 				const r = next();
 				const result: ExecResult = {
 					exitCode: r.exitCode ?? 0,
@@ -46,7 +58,8 @@ export const scriptedHarness = <Name extends string>(
 				}
 				return result;
 			}),
-		stream: (_opts: ExecOpts) => {
+		stream: (opts: ExecOpts) => {
+			options.onCall?.(opts);
 			const r = next();
 			const events: HarnessEvent[] = [];
 			if (r.stdout) {

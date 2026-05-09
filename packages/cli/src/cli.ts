@@ -1,7 +1,7 @@
 import { Args, Command, Options } from '@effect/cli';
 import { Path } from '@effect/platform';
-import { Effect, Predicate } from 'effect';
-import { ConfigLoadError, type Factory } from '@factory/core';
+import { Effect, Option, Predicate } from 'effect';
+import { ConfigLoadError, type Factory, PermissionMode } from '@factory/core';
 
 const VERSION = '0.0.0';
 
@@ -26,6 +26,11 @@ const noOtelOption = Options.boolean('no-otel').pipe(
 
 const idleTimeoutOption = Options.integer('idle-timeout').pipe(
 	Options.withDescription('Per-step idle timeout in seconds (default: no timeout)'),
+	Options.optional,
+);
+
+const permissionsOption = Options.choice('permissions', PermissionMode.literals).pipe(
+	Options.withDescription('Override permission mode for this run (top of precedence)'),
 	Options.optional,
 );
 
@@ -116,18 +121,21 @@ const runCommand = Command.make(
 		cwd: cwdOption,
 		noOtel: noOtelOption,
 		idleTimeout: idleTimeoutOption,
+		permissions: permissionsOption,
 	},
-	({ name, prd, cwd: cwdOpt, noOtel, idleTimeout }) =>
+	({ name, prd, cwd: cwdOpt, noOtel, idleTimeout, permissions }) =>
 		Effect.gen(function* () {
 			const path = yield* Path.Path;
-			const cwd = cwdOpt._tag === 'Some' ? cwdOpt.value : path.resolve(process.cwd());
-			const idleTimeoutMs = idleTimeout._tag === 'Some' ? idleTimeout.value * 1000 : undefined;
+			const cwd = Option.getOrUndefined(cwdOpt) ?? path.resolve(process.cwd());
+			const idleTimeoutMs = Option.getOrUndefined(Option.map(idleTimeout, (s) => s * 1000));
+			const permissionsMode = Option.getOrUndefined(permissions);
 
 			const factoryDef = yield* loadFactoryConfig(cwd, name);
 			yield* factoryDef.runEffect({
 				prd,
 				cwd,
 				idleTimeoutMs,
+				permissions: permissionsMode,
 				otel: !noOtel,
 			});
 		}),

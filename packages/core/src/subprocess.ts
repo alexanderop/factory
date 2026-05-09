@@ -2,22 +2,35 @@ import { Command, type CommandExecutor } from '@effect/platform';
 import { Duration, Effect, Stream } from 'effect';
 import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
-import type { ExecOpts, ExecResult, Harness, HarnessEvent } from './types.ts';
+import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from './types.ts';
 
-export interface SubprocessHarnessConfig<Name extends string = string> {
+export interface SubprocessHarnessConfig<Name extends string, P extends PermissionMode> {
 	readonly name: Name;
 	readonly bin: string;
-	readonly buildArgs: (prompt: string) => ReadonlyArray<string>;
+	readonly supports: ReadonlyArray<P>;
+	readonly buildArgs: (prompt: string, ctx: { readonly permissions: P }) => ReadonlyArray<string>;
+	readonly defaultPermissions?: P;
 }
 
-export const createSubprocessHarness = <Name extends string>(
-	config: SubprocessHarnessConfig<Name>,
+export const createSubprocessHarness = <Name extends string, const P extends PermissionMode>(
+	config: SubprocessHarnessConfig<Name, P>,
 ): Harness<Name> => {
 	const harnessName = HarnessName.make(config.name);
+	const supports: ReadonlyArray<PermissionMode> = config.supports;
+	const isSupported = (mode: PermissionMode): mode is P => supports.includes(mode);
 
 	const buildCommand = (opts: ExecOpts): Command.Command => {
-		const base = Command.make(config.bin, ...config.buildArgs(opts.prompt));
-		const withCwd = opts.cwd ? Command.workingDirectory(base, opts.cwd) : base;
+		if (!isSupported(opts.permissions)) {
+			throw new Error(
+				`harness '${config.name}' does not support permission mode '${opts.permissions}' (orchestrator should have rejected this earlier)`,
+			);
+		}
+		const base = Command.make(
+			config.bin,
+			...config.buildArgs(opts.prompt, { permissions: opts.permissions }),
+		);
+		const withStdin = Command.stdin(base, Stream.empty);
+		const withCwd = opts.cwd ? Command.workingDirectory(withStdin, opts.cwd) : withStdin;
 		return opts.env ? Command.env(withCwd, opts.env) : withCwd;
 	};
 
@@ -119,6 +132,8 @@ export const createSubprocessHarness = <Name extends string>(
 
 	return {
 		name: config.name,
+		supports: config.supports,
+		defaultPermissions: config.defaultPermissions,
 		exec,
 		stream,
 	};

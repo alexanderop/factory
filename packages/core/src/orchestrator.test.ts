@@ -13,7 +13,7 @@ import {
 	scriptedUntilEvaluator,
 	SilentDisplay,
 } from './testing/index.ts';
-import type { FactoryEvent } from './types.ts';
+import type { ExecOpts, FactoryEvent, PermissionMode } from './types.ts';
 
 const fakeHarness = scriptedHarness('claude-code', [
 	{ stdout: 'iter-1-output\n' },
@@ -121,6 +121,148 @@ Iterate until done.`,
 		);
 		expect(ends).toHaveLength(1);
 		expect(ends[0]?.ok).toBe(true);
+	});
+
+	const runWithPermissions = async (args: {
+		readonly factoryPermissions?: PermissionMode;
+		readonly stepPermissions?: PermissionMode;
+		readonly frontmatterPermissions?: PermissionMode;
+		readonly cliPermissions?: PermissionMode;
+		readonly harnessDefault?: PermissionMode;
+	}): Promise<PermissionMode | undefined> => {
+		const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+		const eventsRef = Ref.unsafeMake<ReadonlyArray<FactoryEvent>>([]);
+
+		const calls: ExecOpts[] = [];
+		const recordingHarness = scriptedHarness('claude-code', [{ stdout: 'iter-1\n' }], {
+			defaultPermissions: args.harnessDefault,
+			onCall: (opts) => calls.push(opts),
+		});
+
+		const stepBody =
+			args.frontmatterPermissions === undefined
+				? `---\nname: only\n---\nDo it.`
+				: `---\nname: only\npermissions: ${args.frontmatterPermissions}\n---\nDo it.`;
+
+		const layer = Layer.mergeAll(
+			SilentDisplay.layer(displayRef),
+			recordingEventEmitter.layer(eventsRef),
+			harnessRegistryLayer([recordingHarness]),
+			InMemoryStepLoader.layer(new Map([['./steps/only.md', stepBody]])),
+			scriptedUntilEvaluator.layer([true]),
+			InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
+		).pipe(Layer.provideMerge(NodeContext.layer));
+
+		await Effect.runPromise(
+			runFactoryEffect(
+				{
+					name: 'sdd',
+					harness: 'claude-code',
+					permissions: args.factoryPermissions,
+				},
+				[
+					{
+						id: 'only',
+						source: './steps/only.md',
+						options:
+							args.stepPermissions === undefined ? {} : { permissions: args.stepPermissions },
+					},
+				],
+				{
+					prd: 'inline PRD text',
+					cwd: process.cwd(),
+					permissions: args.cliPermissions,
+				},
+			).pipe(Effect.provide(layer)),
+		);
+
+		return calls[0]?.permissions;
+	};
+
+	describe('permission resolution', () => {
+		it('falls back to "prompt" when nothing is configured', async () => {
+			const mode = await runWithPermissions({});
+			expect(mode).toBe('prompt');
+		});
+
+		it('uses harness defaultPermissions when no override is set', async () => {
+			const mode = await runWithPermissions({ harnessDefault: 'skip' });
+			expect(mode).toBe('skip');
+		});
+
+		it('pipeline permissions override harness defaultPermissions', async () => {
+			const mode = await runWithPermissions({
+				harnessDefault: 'skip',
+				factoryPermissions: 'read-only',
+			});
+			expect(mode).toBe('read-only');
+		});
+
+		it('frontmatter overrides pipeline permissions', async () => {
+			const mode = await runWithPermissions({
+				factoryPermissions: 'read-only',
+				frontmatterPermissions: 'accept-edits',
+			});
+			expect(mode).toBe('accept-edits');
+		});
+
+		it('step option overrides frontmatter permissions', async () => {
+			const mode = await runWithPermissions({
+				frontmatterPermissions: 'accept-edits',
+				stepPermissions: 'read-only',
+			});
+			expect(mode).toBe('read-only');
+		});
+
+		it('CLI permissions take top precedence', async () => {
+			const mode = await runWithPermissions({
+				harnessDefault: 'skip',
+				factoryPermissions: 'read-only',
+				frontmatterPermissions: 'accept-edits',
+				stepPermissions: 'read-only',
+				cliPermissions: 'prompt',
+			});
+			expect(mode).toBe('prompt');
+		});
+
+		it('fails with UnsupportedPermissionError when resolved mode is not in harness.supports', async () => {
+			const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+			const eventsRef = Ref.unsafeMake<ReadonlyArray<FactoryEvent>>([]);
+
+			const narrowHarness = scriptedHarness('claude-code', [{ stdout: 'unused\n' }], {
+				supports: ['skip', 'read-only'] as const,
+				defaultPermissions: 'skip',
+			});
+
+			const layer = Layer.mergeAll(
+				SilentDisplay.layer(displayRef),
+				recordingEventEmitter.layer(eventsRef),
+				harnessRegistryLayer([narrowHarness]),
+				InMemoryStepLoader.layer(new Map([['./steps/only.md', `---\nname: only\n---\nDo it.`]])),
+				scriptedUntilEvaluator.layer([true]),
+				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
+			).pipe(Layer.provideMerge(NodeContext.layer));
+
+			const exit = await Effect.runPromiseExit(
+				runFactoryEffect(
+					{ name: 'sdd', harness: 'claude-code' },
+					[{ id: 'only', source: './steps/only.md', options: {} }],
+					{
+						prd: 'inline PRD text',
+						cwd: process.cwd(),
+						permissions: 'accept-edits',
+					},
+				).pipe(Effect.provide(layer)),
+			);
+
+			expect(Exit.isFailure(exit)).toBe(true);
+			if (Exit.isFailure(exit)) {
+				const failure = Cause.failureOption(exit.cause);
+				expect(failure._tag === 'Some' && failure.value._tag === 'UnsupportedPermissionError').toBe(
+					true,
+				);
+			}
+		});
 	});
 
 	it('fails with StepMaxItersError when until never holds', async () => {
