@@ -1,6 +1,7 @@
-packages: [packages/*, examples/*]
+packages: [ packages/*, examples/* ]
 allowBuilds:
   '@parcel/watcher': true
   esbuild: true
+  lefthook: true
   msgpackr-extract: true
   protobufjs: true

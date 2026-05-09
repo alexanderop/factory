@@ -1,0 +1,19 @@
+min_version: 1.10.0
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: lint
+      glob: "*.{js,ts,mjs,cjs}"
+      exclude:
+        - repos/**/*
+      run: pnpm exec oxlint --type-aware --fix {staged_files}
+      stage_fixed: true
+
+    - name: format
+      glob: "*.{js,ts,mjs,cjs,json,jsonc,md}"
+      exclude:
+        - repos/**/*
+        - pnpm-lock.yaml
+      run: pnpm exec oxfmt {staged_files}
+      stage_fixed: true

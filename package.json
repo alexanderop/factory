@@ -23,6 +23,7 @@
 		"@effect/vitest": "^0.29.0",
 		"@types/node": "^22.10.10",
 		"effect": "^3.21.2",
+		"lefthook": "^2.1.6",
 		"oxfmt": "^0.48.0",
 		"oxlint": "^1.63.0",
 		"oxlint-tsgolint": "^0.22.1",
