@@ -68,6 +68,12 @@ export class ConfigLoadError extends Data.TaggedError('ConfigLoadError')<{
 	readonly cwd: string;
 }> {}
 
+/** Writing to the per-run SQLite DB or on-disk artifacts under `.factory/runs/<runId>/` failed. */
+export class RunRecordingError extends Data.TaggedError('RunRecordingError')<{
+	readonly message: string;
+	readonly path?: string;
+}> {}
+
 export type FactoryError =
 	| StepLoadError
 	| HarnessNotFoundError
@@ -78,4 +84,5 @@ export type FactoryError =
 	| UntilEvalError
 	| MissingHarnessError
 	| PrdLoadError
-	| ConfigLoadError;
+	| ConfigLoadError
+	| RunRecordingError;

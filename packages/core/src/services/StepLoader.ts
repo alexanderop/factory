@@ -31,6 +31,7 @@ const parseStep = (path: string, raw: string): Effect.Effect<LoadedStep, StepLoa
 		return {
 			id: frontmatter.name ?? StepId.make(path),
 			path,
+			raw,
 			frontmatter,
 			prompt: parsed.content.trim(),
 		};

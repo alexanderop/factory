@@ -1,6 +1,8 @@
 # sdd-quickstart
 
-Minimal example of the reference SDD pipeline.
+Minimal example of the reference SDD pipeline. The target codebase is a small
+Vue 3 + Vite + Nuxt UI to-do app under [`./app`](./app), and `feature.md` asks
+the pipeline to add dark mode to it.
 
 ## Quick start (from repo root)
 
@@ -13,7 +15,22 @@ pnpm aspire:down  # stop the dashboard when you're done
 
 `pnpm aspire:logs` tails the dashboard container if you need it.
 
-The pipeline is defined in `.factory/factory.ts` and step prompts live under `.factory/steps/`.
+The pipeline is defined in `.factory/factory.ts` and step prompts live under
+`.factory/steps/`. The pipeline runs from this directory, so `feature.md`
+points the agents at `./app` for the actual code changes.
+
+## Run the to-do app
+
+To see what the pipeline is editing, run the app directly:
+
+```bash
+pnpm --filter sdd-quickstart-app dev      # http://localhost:5173
+pnpm --filter sdd-quickstart-app build    # production build
+pnpm --filter sdd-quickstart-app typecheck
+```
+
+Out of the box it ships with light mode only — adding dark mode is the
+pipeline's job.
 
 ## Running directly
 

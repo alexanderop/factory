@@ -1,7 +1,9 @@
 import { NodeContext } from '@effect/platform-node';
 import { Cause, Effect, Exit, Layer, Ref } from 'effect';
 import { describe, expect, it } from 'vitest';
+import { RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
+import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
 	harnessRegistryLayer,
@@ -40,6 +42,7 @@ const buildLayer = (
 		]),
 		InMemoryStepLoader.layer(new Map(steps)),
 		scriptedUntilEvaluator.layer(verdicts),
+		InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
 	).pipe(Layer.provideMerge(NodeContext.layer));
 
 describe('runFactoryEffect', () => {

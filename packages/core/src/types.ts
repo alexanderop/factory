@@ -59,6 +59,7 @@ export type StepFrontmatter = typeof StepFrontmatter.Type;
 export interface LoadedStep {
 	readonly id: StepId;
 	readonly path: string;
+	readonly raw: string;
 	readonly frontmatter: StepFrontmatter;
 	readonly prompt: string;
 }

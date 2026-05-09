@@ -50,6 +50,7 @@
     "import/no-duplicates": "error",
     "import/no-self-import": "error",
     "import/no-empty-named-blocks": "error",
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css", "**/*.scss"] }],
 
     "unicorn/prefer-node-protocol": "error",
     "unicorn/prefer-top-level-await": "error",

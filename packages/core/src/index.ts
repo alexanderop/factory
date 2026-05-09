@@ -6,6 +6,7 @@ export {
 	HarnessSpawnError,
 	MissingHarnessError,
 	PrdLoadError,
+	RunRecordingError,
 	StepIdleTimeoutError,
 	StepLoadError,
 	StepMaxItersError,
@@ -34,6 +35,19 @@ export {
 	HarnessRegistry,
 	type HarnessRegistryService,
 } from './services/HarnessRegistry.ts';
+export {
+	InMemoryRunWorkspace,
+	type IterEndArgs,
+	type IterPaths,
+	type IterStartArgs,
+	LiveRunWorkspace,
+	type RunEndArgs,
+	type RunStartArgs,
+	RunWorkspace,
+	type RunWorkspaceService,
+	type StepEndArgs,
+	type StepStartArgs,
+} from './services/RunWorkspace.ts';
 export {
 	FileStepLoader,
 	InMemoryStepLoader,
