@@ -13,10 +13,10 @@ export interface ScriptedResponse {
  * Test double for `Harness`. Cycles through `responses` on each `exec`/`stream`
  * call. Use via `harnessRegistryLayer([scriptedHarness('claude-code', [...])])`.
  */
-export const scriptedHarness = (
-	name: string,
+export const scriptedHarness = <Name extends string>(
+	name: Name,
 	responses: ReadonlyArray<ScriptedResponse>,
-): Harness => {
+): Harness<Name> => {
 	let cursor = 0;
 	const next = (): ScriptedResponse => {
 		const r = responses[cursor % Math.max(responses.length, 1)] ?? {};

@@ -30,8 +30,8 @@ export type HarnessEvent =
 
 export type HarnessExecRequirements = CommandExecutor.CommandExecutor;
 
-export interface Harness {
-	readonly name: string;
+export interface Harness<Name extends string = string> {
+	readonly name: Name;
 	readonly exec: (
 		opts: ExecOpts,
 	) => Effect.Effect<
@@ -63,8 +63,8 @@ export interface LoadedStep {
 	readonly prompt: string;
 }
 
-export interface StepOptions {
-	readonly harness?: string;
+export interface StepOptions<Names extends string = string> {
+	readonly harness?: Names;
 	readonly until?: string;
 	readonly maxIters?: number;
 }
@@ -100,10 +100,10 @@ export type FactoryEvent =
 			readonly error: unknown;
 	  };
 
-export interface FactoryOptions {
+export interface FactoryOptions<Names extends string = string> {
 	readonly name: string;
-	readonly harness?: string;
-	readonly harnesses?: ReadonlyArray<Harness>;
+	readonly harness?: Names;
+	readonly harnesses?: ReadonlyArray<Harness<Names>>;
 }
 
 export interface RunOptions {
@@ -121,9 +121,13 @@ export interface StepEntry {
 	readonly options: StepOptions;
 }
 
-export interface Factory {
+export interface Factory<Names extends string = string, StepIds extends string = never> {
 	readonly name: string;
-	readonly step: (id: string, source: string, options?: StepOptions) => Factory;
+	readonly step: <Id extends string>(
+		id: Exclude<Id, StepIds>,
+		source: string,
+		options?: StepOptions<Names>,
+	) => Factory<Names, StepIds | Id>;
 	readonly run: (options: RunOptions) => Promise<void>;
 	readonly runEffect: (options: RunOptions) => Effect.Effect<void, FactoryError>;
 }

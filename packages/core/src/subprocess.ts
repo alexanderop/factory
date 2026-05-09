@@ -4,13 +4,15 @@ import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './err
 import { HarnessName, StepId } from './ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent } from './types.ts';
 
-export interface SubprocessHarnessConfig {
-	readonly name: string;
+export interface SubprocessHarnessConfig<Name extends string = string> {
+	readonly name: Name;
 	readonly bin: string;
 	readonly buildArgs: (prompt: string) => ReadonlyArray<string>;
 }
 
-export const createSubprocessHarness = (config: SubprocessHarnessConfig): Harness => {
+export const createSubprocessHarness = <Name extends string>(
+	config: SubprocessHarnessConfig<Name>,
+): Harness<Name> => {
 	const harnessName = HarnessName.make(config.name);
 
 	const buildCommand = (opts: ExecOpts): Command.Command => {
