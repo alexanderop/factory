@@ -19,16 +19,13 @@ The pipeline is defined in `.factory/factory.ts` and step prompts live under
 `.factory/steps/`. The pipeline runs from this directory, so `feature.md`
 points the agents at `./app` for the actual code changes.
 
-This example runs every step on `claude-code` pinned to Opus 4.7
-(`claude --model claude-opus-4-7`):
+This example runs every step on `claude-code`:
 
-| step       | harness       | why                                             |
-| ---------- | ------------- | ----------------------------------------------- |
-| `plan`     | `claude-code` | strategic decomposition into vertical slices    |
-| `ralph`    | `claude-code` | tight implement → run-tests → fix loop          |
-| `verify`   | `claude-code` | strict diff-vs-PRD review                       |
-| `qa`       | `claude-code` | run typecheck/test/lint and fix small breakages |
-| `simplify` | `claude-code` | remove smells without changing behaviour        |
+| step       | harness       | why                                                                     |
+| ---------- | ------------- | ----------------------------------------------------------------------- |
+| `plan`     | `claude-code` | break the PRD into vertical slices in `IMPLEMENTATION_PLAN.md`          |
+| `ralph`    | `claude-code` | per slice: write a failing test, make it pass, tick the slice (TDD)     |
+| `refactor` | `claude-code` | behaviour-preserving cleanup of the diff (no new tests, no API renames) |
 
 You'll need the `claude` CLI installed locally.
 
@@ -37,9 +34,10 @@ You'll need the `claude` CLI installed locally.
 To see what the pipeline is editing, run the app directly:
 
 ```bash
-pnpm --filter sdd-quickstart-app dev      # http://localhost:5173
-pnpm --filter sdd-quickstart-app build    # production build
+pnpm --filter sdd-quickstart-app dev        # http://localhost:5173
+pnpm --filter sdd-quickstart-app build      # production build
 pnpm --filter sdd-quickstart-app typecheck
+pnpm --filter sdd-quickstart-app test       # vitest, used by the ralph TDD loop
 ```
 
 Out of the box it ships with light mode only — adding dark mode is the
@@ -96,9 +94,7 @@ Service `factory` with a span tree per run:
 factory.run                  (factory.pipeline=sdd)
 ├── factory.step             (factory.step=plan, factory.harness=claude-code, factory.run.id=…)
 ├── factory.step             (… step=ralph …)
-├── factory.step             (… step=verify …)
-├── factory.step             (… step=qa …)
-└── factory.step             (… step=simplify …)
+└── factory.step             (… step=refactor …)
 ```
 
 Each `factory.step` span wraps the harness subprocess call, so its duration is the
