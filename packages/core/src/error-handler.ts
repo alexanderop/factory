@@ -1,18 +1,15 @@
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 
 const isTagged = (e: unknown): e is { readonly _tag: string; readonly message?: string } =>
-	typeof e === 'object' &&
-	e !== null &&
-	'_tag' in e &&
-	typeof (e as { _tag: unknown })._tag === 'string';
+	Predicate.isRecord(e) && typeof e._tag === 'string';
 
 export const formatErrorMessage = (error: unknown): string => {
 	if (isTagged(error)) {
-		const message = typeof error.message === 'string' ? error.message : String(error);
+		const message = typeof error.message === 'string' ? error.message : JSON.stringify(error);
 		return `[${error._tag}] ${message}`;
 	}
 	if (error instanceof Error) return error.message;
-	return String(error);
+	return typeof error === 'string' ? error : JSON.stringify(error);
 };
 
 /**

@@ -1,10 +1,11 @@
 import { Command, type CommandExecutor } from '@effect/platform';
 import { Context, Effect, Layer } from 'effect';
 import { UntilEvalError } from '../errors.ts';
+import type { StepId } from '../ids.ts';
 import type { ExecResult } from '../types.ts';
 
 export interface UntilEvalCtx {
-	readonly step: string;
+	readonly step: StepId;
 	readonly cwd: string;
 	readonly lastResult: ExecResult;
 }

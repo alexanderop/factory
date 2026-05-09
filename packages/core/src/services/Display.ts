@@ -1,19 +1,20 @@
 import { Context, Effect, Layer, Ref } from 'effect';
+import type { PipelineName, RunId, StepId } from '../ids.ts';
 
 export type DisplayEntry =
-	| { readonly _tag: 'runStart'; readonly pipeline: string; readonly runId: string }
-	| { readonly _tag: 'runEnd'; readonly runId: string }
-	| { readonly _tag: 'stepStart'; readonly step: string }
+	| { readonly _tag: 'runStart'; readonly pipeline: PipelineName; readonly runId: RunId }
+	| { readonly _tag: 'runEnd'; readonly runId: RunId }
+	| { readonly _tag: 'stepStart'; readonly step: StepId }
 	| {
 			readonly _tag: 'stepIter';
-			readonly step: string;
+			readonly step: StepId;
 			readonly iter: number;
 			readonly maxIters: number;
 	  }
-	| { readonly _tag: 'stepEnd'; readonly step: string; readonly ok: boolean }
+	| { readonly _tag: 'stepEnd'; readonly step: StepId; readonly ok: boolean }
 	| {
 			readonly _tag: 'harnessLine';
-			readonly step: string;
+			readonly step: StepId;
 			readonly stream: 'stdout' | 'stderr';
 			readonly line: string;
 	  }
@@ -21,13 +22,13 @@ export type DisplayEntry =
 	| { readonly _tag: 'error'; readonly message: string };
 
 export interface DisplayService {
-	readonly runStart: (pipeline: string, runId: string) => Effect.Effect<void>;
-	readonly runEnd: (runId: string) => Effect.Effect<void>;
-	readonly stepStart: (step: string) => Effect.Effect<void>;
-	readonly stepIter: (step: string, iter: number, maxIters: number) => Effect.Effect<void>;
-	readonly stepEnd: (step: string, ok: boolean) => Effect.Effect<void>;
+	readonly runStart: (pipeline: PipelineName, runId: RunId) => Effect.Effect<void>;
+	readonly runEnd: (runId: RunId) => Effect.Effect<void>;
+	readonly stepStart: (step: StepId) => Effect.Effect<void>;
+	readonly stepIter: (step: StepId, iter: number, maxIters: number) => Effect.Effect<void>;
+	readonly stepEnd: (step: StepId, ok: boolean) => Effect.Effect<void>;
 	readonly harnessLine: (
-		step: string,
+		step: StepId,
 		stream: 'stdout' | 'stderr',
 		line: string,
 	) => Effect.Effect<void>;

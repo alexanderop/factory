@@ -151,7 +151,7 @@ Iterate.`,
 			const failure = Cause.failureOption(exit.cause);
 			expect(failure._tag).toBe('Some');
 			if (failure._tag === 'Some') {
-				expect((failure.value as { _tag: string })._tag).toBe('StepMaxItersError');
+				expect(failure.value._tag).toBe('StepMaxItersError');
 			}
 		}
 

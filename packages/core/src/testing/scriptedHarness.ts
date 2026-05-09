@@ -1,5 +1,6 @@
 import { Effect, Stream } from 'effect';
 import { HarnessExecError } from '../errors.ts';
+import { HarnessName } from '../ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent } from '../types.ts';
 
 export interface ScriptedResponse {
@@ -37,7 +38,7 @@ export const scriptedHarness = (
 					return yield* Effect.fail(
 						new HarnessExecError({
 							message: `scripted harness '${name}' returned exit code ${result.exitCode}`,
-							harness: name,
+							harness: HarnessName.make(name),
 							exitCode: result.exitCode,
 							stderr: result.stderr,
 						}),

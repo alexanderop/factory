@@ -1,6 +1,6 @@
 import { Args, Command, Options } from '@effect/cli';
 import { Path } from '@effect/platform';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { ConfigLoadError, type Factory } from '@factory/core';
 
 const VERSION = '0.0.0';
@@ -37,10 +37,14 @@ const CANDIDATES = [
 ] as const;
 
 const isModuleNotFound = (e: unknown): boolean =>
-	typeof e === 'object' &&
-	e !== null &&
-	'code' in e &&
-	(e as { code: unknown }).code === 'ERR_MODULE_NOT_FOUND';
+	Predicate.isRecord(e) && e.code === 'ERR_MODULE_NOT_FOUND';
+
+const isFactory = (v: unknown): v is Factory =>
+	Predicate.isRecord(v) &&
+	typeof v.name === 'string' &&
+	typeof v.step === 'function' &&
+	typeof v.run === 'function' &&
+	typeof v.runEffect === 'function';
 
 const loadFactoryConfig = (
 	cwd: string,
@@ -67,9 +71,17 @@ const loadFactoryConfig = (
 				);
 			}
 
-			const mod = result.right as { default?: Factory; [key: string]: unknown };
-			const def = (mod.default ?? mod[name]) as Factory | undefined;
-			if (!def) {
+			const mod: unknown = result.right;
+			if (!Predicate.isRecord(mod)) {
+				return yield* Effect.fail(
+					new ConfigLoadError({
+						message: `${candidate} did not export a module object`,
+						cwd,
+					}),
+				);
+			}
+			const def = mod.default ?? mod[name];
+			if (!isFactory(def)) {
 				return yield* Effect.fail(
 					new ConfigLoadError({
 						message: `${candidate} does not export a factory (default or named '${name}')`,

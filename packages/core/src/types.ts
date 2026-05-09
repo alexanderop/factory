@@ -1,11 +1,13 @@
 import type { CommandExecutor } from '@effect/platform';
-import type { Effect, Stream } from 'effect';
+import { Schema, type Effect, type Stream } from 'effect';
 import type {
 	FactoryError,
 	HarnessExecError,
 	HarnessSpawnError,
 	StepIdleTimeoutError,
 } from './errors.ts';
+import { HarnessName, StepId } from './ids.ts';
+import type { PipelineName, RunId } from './ids.ts';
 
 export interface ExecOpts {
 	readonly prompt: string;
@@ -46,15 +48,16 @@ export interface Harness {
 	>;
 }
 
-export interface StepFrontmatter {
-	readonly name?: string;
-	readonly harness?: string;
-	readonly until?: string;
-	readonly maxIters?: number;
-}
+export const StepFrontmatter = Schema.Struct({
+	name: Schema.optional(StepId),
+	harness: Schema.optional(HarnessName),
+	until: Schema.optional(Schema.String),
+	maxIters: Schema.optional(Schema.Number),
+});
+export type StepFrontmatter = typeof StepFrontmatter.Type;
 
 export interface LoadedStep {
-	readonly id: string;
+	readonly id: StepId;
 	readonly path: string;
 	readonly frontmatter: StepFrontmatter;
 	readonly prompt: string;
@@ -69,31 +72,31 @@ export interface StepOptions {
 export type RunState = Record<string, unknown>;
 
 export type FactoryEvent =
-	| { readonly type: 'run.start'; readonly runId: string; readonly pipeline: string }
-	| { readonly type: 'run.end'; readonly runId: string }
-	| { readonly type: 'step.start'; readonly runId: string; readonly step: string }
+	| { readonly type: 'run.start'; readonly runId: RunId; readonly pipeline: PipelineName }
+	| { readonly type: 'run.end'; readonly runId: RunId }
+	| { readonly type: 'step.start'; readonly runId: RunId; readonly step: StepId }
 	| {
 			readonly type: 'step.iter';
-			readonly runId: string;
-			readonly step: string;
+			readonly runId: RunId;
+			readonly step: StepId;
 			readonly iter: number;
 	  }
 	| {
 			readonly type: 'step.end';
-			readonly runId: string;
-			readonly step: string;
+			readonly runId: RunId;
+			readonly step: StepId;
 			readonly ok: boolean;
 	  }
 	| {
 			readonly type: 'step.output';
-			readonly runId: string;
-			readonly step: string;
+			readonly runId: RunId;
+			readonly step: StepId;
 			readonly output: unknown;
 	  }
 	| {
 			readonly type: 'error';
-			readonly runId: string;
-			readonly step?: string;
+			readonly runId: RunId;
+			readonly step?: StepId;
 			readonly error: unknown;
 	  };
 

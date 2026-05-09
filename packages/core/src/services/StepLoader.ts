@@ -1,8 +1,9 @@
 import { FileSystem, Path } from '@effect/platform';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import matter from 'gray-matter';
 import { StepLoadError } from '../errors.ts';
-import type { LoadedStep, StepFrontmatter } from '../types.ts';
+import { StepId } from '../ids.ts';
+import { StepFrontmatter, type LoadedStep } from '../types.ts';
 
 export interface StepLoaderService {
 	readonly load: (source: string, cwd: string) => Effect.Effect<LoadedStep, StepLoadError>;
@@ -13,16 +14,27 @@ export class StepLoader extends Context.Tag('@factory/StepLoader')<
 	StepLoaderService
 >() {}
 
-const parseStep = (path: string, raw: string): LoadedStep => {
-	const parsed = matter(raw);
-	const frontmatter = parsed.data as StepFrontmatter;
-	return {
-		id: frontmatter.name ?? path,
-		path,
-		frontmatter,
-		prompt: parsed.content.trim(),
-	};
-};
+const decodeFrontmatter = Schema.decodeUnknown(StepFrontmatter);
+
+const parseStep = (path: string, raw: string): Effect.Effect<LoadedStep, StepLoadError> =>
+	Effect.gen(function* () {
+		const parsed = matter(raw);
+		const frontmatter = yield* decodeFrontmatter(parsed.data).pipe(
+			Effect.mapError(
+				(e) =>
+					new StepLoadError({
+						message: `invalid frontmatter in ${path}: ${e.message}`,
+						path,
+					}),
+			),
+		);
+		return {
+			id: frontmatter.name ?? StepId.make(path),
+			path,
+			frontmatter,
+			prompt: parsed.content.trim(),
+		};
+	});
 
 export const FileStepLoader = {
 	layer: Layer.effect(
@@ -34,15 +46,14 @@ export const FileStepLoader = {
 				load: (source, cwd) => {
 					const resolved = path.isAbsolute(source) ? source : path.resolve(cwd, source);
 					return fs.readFileString(resolved).pipe(
-						Effect.map((raw) => parseStep(resolved, raw)),
-						Effect.catchAll((e) =>
-							Effect.fail(
+						Effect.mapError(
+							(e) =>
 								new StepLoadError({
 									message: `failed to read step '${source}': ${e instanceof Error ? e.message : String(e)}`,
 									path: resolved,
 								}),
-							),
 						),
+						Effect.flatMap((raw) => parseStep(resolved, raw)),
 					);
 				},
 			};
@@ -63,7 +74,7 @@ export const InMemoryStepLoader = {
 						}),
 					);
 				}
-				return Effect.succeed(parseStep(source, raw));
+				return parseStep(source, raw);
 			},
 		}),
 };

@@ -1,6 +1,7 @@
 import { Command, type CommandExecutor } from '@effect/platform';
 import { Duration, Effect, Stream } from 'effect';
 import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
+import { HarnessName, StepId } from './ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent } from './types.ts';
 
 export interface SubprocessHarnessConfig {
@@ -10,6 +11,8 @@ export interface SubprocessHarnessConfig {
 }
 
 export const createSubprocessHarness = (config: SubprocessHarnessConfig): Harness => {
+	const harnessName = HarnessName.make(config.name);
+
 	const buildCommand = (opts: ExecOpts): Command.Command => {
 		const base = Command.make(config.bin, ...config.buildArgs(opts.prompt));
 		const withCwd = opts.cwd ? Command.workingDirectory(base, opts.cwd) : base;
@@ -19,7 +22,7 @@ export const createSubprocessHarness = (config: SubprocessHarnessConfig): Harnes
 	const toSpawnError = (e: unknown): HarnessSpawnError =>
 		new HarnessSpawnError({
 			message: `failed to spawn '${config.bin}': ${e instanceof Error ? e.message : String(e)}`,
-			harness: config.name,
+			harness: harnessName,
 			bin: config.bin,
 		});
 
@@ -65,7 +68,7 @@ export const createSubprocessHarness = (config: SubprocessHarnessConfig): Harnes
 					() =>
 						new StepIdleTimeoutError({
 							message: `harness '${config.name}' produced no output for ${ms}ms`,
-							step: '',
+							step: StepId.make(''),
 							timeoutMs: ms,
 						}),
 					Duration.millis(ms),
@@ -102,7 +105,7 @@ export const createSubprocessHarness = (config: SubprocessHarnessConfig): Harnes
 				return yield* Effect.fail(
 					new HarnessExecError({
 						message: `harness '${config.name}' exited with code ${exitCode}`,
-						harness: config.name,
+						harness: harnessName,
 						exitCode,
 						stderr: stderr.trim(),
 					}),

@@ -8,6 +8,7 @@ import {
 	StepMaxItersError,
 	type FactoryError,
 } from './errors.ts';
+import { HarnessName, PipelineName, RunId, StepId } from './ids.ts';
 import { Display } from './services/Display.ts';
 import { EventEmitter } from './services/EventEmitter.ts';
 import { HarnessRegistry } from './services/HarnessRegistry.ts';
@@ -24,8 +25,8 @@ import type {
 } from './types.ts';
 
 interface RunStepArgs {
-	readonly runId: string;
-	readonly stepId: string;
+	readonly runId: RunId;
+	readonly stepId: StepId;
 	readonly loaded: LoadedStep;
 	readonly harness: Harness;
 	readonly options: StepOptions;
@@ -91,7 +92,11 @@ const runStep = (
 			lastResult = yield* harness.exec({ prompt: fullPrompt, cwd, idleTimeoutMs }).pipe(
 				Effect.mapError((e) =>
 					e._tag === 'StepIdleTimeoutError'
-						? new StepIdleTimeoutError({ message: e.message, step: stepId, timeoutMs: e.timeoutMs })
+						? new StepIdleTimeoutError({
+								message: e.message,
+								step: stepId,
+								timeoutMs: e.timeoutMs,
+							})
 						: e,
 				),
 			);
@@ -151,31 +156,35 @@ export const runFactoryEffect = (
 		const loader = yield* StepLoader;
 		const registry = yield* HarnessRegistry;
 
-		const runId = randomUUID();
+		const runId = RunId.make(randomUUID());
+		const pipeline = PipelineName.make(factoryOpts.name);
 		const cwd = runOpts.cwd ?? process.cwd();
 
-		yield* display.runStart(factoryOpts.name, runId);
-		yield* emitter.emit({ type: 'run.start', runId, pipeline: factoryOpts.name });
+		yield* display.runStart(pipeline, runId);
+		yield* emitter.emit({ type: 'run.start', runId, pipeline });
 
 		const prd = yield* resolvePrdContent(runOpts.prd, cwd);
 
 		const body = Effect.gen(function* () {
 			for (const entry of steps) {
+				const stepId = StepId.make(entry.id);
 				const loaded = yield* loader.load(entry.source, cwd);
 				const harnessName =
-					entry.options.harness ?? loaded.frontmatter.harness ?? factoryOpts.harness;
+					(entry.options.harness ? HarnessName.make(entry.options.harness) : undefined) ??
+					loaded.frontmatter.harness ??
+					(factoryOpts.harness ? HarnessName.make(factoryOpts.harness) : undefined);
 				if (!harnessName) {
 					return yield* Effect.fail(
 						new MissingHarnessError({
-							message: `step '${entry.id}' has no harness (factory({harness}), step option, or frontmatter required)`,
-							step: entry.id,
+							message: `step '${stepId}' has no harness (factory({harness}), step option, or frontmatter required)`,
+							step: stepId,
 						}),
 					);
 				}
 				const harness = yield* registry.resolve(harnessName);
 				yield* runStep({
 					runId,
-					stepId: entry.id,
+					stepId,
 					loaded,
 					harness,
 					options: entry.options,

@@ -11,7 +11,8 @@
     "**/dist/**",
     "**/*.tsbuildinfo",
     "**/pnpm-lock.yaml",
-    ".factory/runs/**"
+    ".factory/runs/**",
+    "repos/**"
   ],
   "overrides": [
     {

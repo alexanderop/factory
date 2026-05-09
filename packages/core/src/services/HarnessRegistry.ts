@@ -1,10 +1,11 @@
 import { Context, Effect, Layer } from 'effect';
 import { HarnessNotFoundError } from '../errors.ts';
+import { HarnessName } from '../ids.ts';
 import type { Harness } from '../types.ts';
 
 export interface HarnessRegistryService {
-	readonly resolve: (name: string) => Effect.Effect<Harness, HarnessNotFoundError>;
-	readonly list: Effect.Effect<ReadonlyArray<string>>;
+	readonly resolve: (name: HarnessName) => Effect.Effect<Harness, HarnessNotFoundError>;
+	readonly list: Effect.Effect<ReadonlyArray<HarnessName>>;
 }
 
 export class HarnessRegistry extends Context.Tag('@factory/HarnessRegistry')<
@@ -13,8 +14,10 @@ export class HarnessRegistry extends Context.Tag('@factory/HarnessRegistry')<
 >() {}
 
 const makeService = (harnesses: ReadonlyArray<Harness>): HarnessRegistryService => {
-	const map = new Map(harnesses.map((h) => [h.name, h]));
-	const names = harnesses.map((h) => h.name);
+	const names = harnesses.map((h) => HarnessName.make(h.name));
+	const map = new Map(
+		harnesses.map((h, i): [HarnessName, Harness] => [names[i] ?? HarnessName.make(h.name), h]),
+	);
 	return {
 		resolve: (name) => {
 			const h = map.get(name);

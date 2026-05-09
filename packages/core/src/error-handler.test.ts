@@ -12,38 +12,42 @@ import {
 	UntilEvalError,
 } from './errors.ts';
 import { formatErrorMessage } from './error-handler.ts';
+import { HarnessName, StepId } from './ids.ts';
 
 describe('formatErrorMessage', () => {
+	const claudeCode = HarnessName.make('claude-code');
+	const ralph = StepId.make('ralph');
+	const plan = StepId.make('plan');
 	const cases = [
 		new StepLoadError({ message: 'cannot read', path: '/x.md' }),
 		new HarnessNotFoundError({
 			message: 'unknown harness foo',
-			harness: 'foo',
-			available: ['claude-code'],
+			harness: HarnessName.make('foo'),
+			available: [claudeCode],
 		}),
 		new HarnessExecError({
 			message: 'exit 1',
-			harness: 'claude-code',
+			harness: claudeCode,
 			exitCode: 1,
 			stderr: '',
 		}),
 		new HarnessSpawnError({
 			message: 'ENOENT',
-			harness: 'claude-code',
+			harness: claudeCode,
 			bin: 'claude',
 		}),
 		new StepIdleTimeoutError({
 			message: 'idle 60s',
-			step: 'ralph',
+			step: ralph,
 			timeoutMs: 60_000,
 		}),
 		new StepMaxItersError({
 			message: 'gave up',
-			step: 'ralph',
+			step: ralph,
 			maxIters: 10,
 		}),
-		new UntilEvalError({ message: 'pnpm test failed', step: 'ralph', until: 'tests pass' }),
-		new MissingHarnessError({ message: 'no harness', step: 'plan' }),
+		new UntilEvalError({ message: 'pnpm test failed', step: ralph, until: 'tests pass' }),
+		new MissingHarnessError({ message: 'no harness', step: plan }),
 		new PrdLoadError({ message: 'cannot read PRD', path: '/feature.md' }),
 		new ConfigLoadError({ message: 'no config', cwd: '/repo' }),
 	];
