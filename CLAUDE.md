@@ -59,11 +59,9 @@ If a pattern is missing for the task at hand:
 
 ## Workflow
 
-1. **Spec first.** For non-trivial work, write the plan to `plans/<topic>.md`
-   before coding. The spec is the durable artifact; implementation follows.
-2. **Implement against the spec.** Fresh agent context per task. Avoid long
-   sessions that accrete failed attempts and biased priors.
-3. **Don't bypass diagnostics.** TypeScript errors, oxlint errors, and failing
+1. **Fresh agent context per task.** Avoid long sessions that accrete failed
+   attempts and biased priors.
+2. **Don't bypass diagnostics.** TypeScript errors, oxlint errors, and failing
    tests are the playpen. If a rule blocks you, fix the code or argue for
    removing the rule — don't disable it inline.
 
