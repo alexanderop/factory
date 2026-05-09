@@ -1,5 +1,6 @@
 import { Command, type CommandExecutor } from '@effect/platform';
 import { Duration, Effect, Stream } from 'effect';
+import type { HarnessCapabilities } from './capabilities.ts';
 import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from './types.ts';
@@ -7,7 +8,9 @@ import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from
 export interface SubprocessHarnessConfig<Name extends string, P extends PermissionMode> {
 	readonly name: Name;
 	readonly bin: string;
-	readonly supports: ReadonlyArray<P>;
+	readonly capabilities: HarnessCapabilities & {
+		readonly factory: { readonly permissions: ReadonlyArray<P>; readonly toolEvents: boolean };
+	};
 	readonly buildArgs: (prompt: string, ctx: { readonly permissions: P }) => ReadonlyArray<string>;
 	readonly defaultPermissions?: P;
 }
@@ -16,7 +19,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 	config: SubprocessHarnessConfig<Name, P>,
 ): Harness<Name> => {
 	const harnessName = HarnessName.make(config.name);
-	const supports: ReadonlyArray<PermissionMode> = config.supports;
+	const supports: ReadonlyArray<PermissionMode> = config.capabilities.factory.permissions;
 	const isSupported = (mode: PermissionMode): mode is P => supports.includes(mode);
 
 	const buildCommand = (opts: ExecOpts): Command.Command => {
@@ -132,7 +135,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 
 	return {
 		name: config.name,
-		supports: config.supports,
+		capabilities: config.capabilities,
 		defaultPermissions: config.defaultPermissions,
 		exec,
 		stream,

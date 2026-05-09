@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "import", "oxc", "promise", "node"],
+  "jsPlugins": ["./tooling/oxlint-plugin.js"],
   "options": {
     "typeAware": true
   },
@@ -67,7 +68,20 @@
     "promise/no-new-statics": "error",
 
     "node/no-exports-assign": "error",
-    "node/no-new-require": "error"
+    "node/no-new-require": "error",
+
+    "factory/import-extensions": "error",
+    "factory/no-disable-validation": "error",
+    "factory/no-sql-type-parameter": "error",
+    "factory/prefer-option-from-nullable": "error",
+    "factory/pipe-max-arguments": "error",
+    "factory/no-effect-asvoid": "error",
+    "factory/no-effect-ignore": "error",
+    "factory/no-effect-catchallcause": "error",
+    "factory/no-service-option": "error",
+    "factory/no-silent-error-swallow": "error",
+    "factory/no-void-expression": "error",
+    "factory/no-nested-layer-provide": "error"
   },
   "ignorePatterns": [
     "**/node_modules/**",
@@ -75,7 +89,8 @@
     "**/*.tsbuildinfo",
     ".factory/runs/**",
     "apps/**",
-    "repos/**"
+    "repos/**",
+    "tooling/**"
   ],
   "overrides": [
     {

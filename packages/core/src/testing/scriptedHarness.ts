@@ -1,4 +1,5 @@
 import { Effect, Stream } from 'effect';
+import type { HarnessCapabilities } from '../capabilities.ts';
 import { HarnessExecError } from '../errors.ts';
 import { HarnessName } from '../ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from '../types.ts';
@@ -11,11 +12,20 @@ export interface ScriptedResponse {
 
 export interface ScriptedHarnessOptions {
 	readonly supports?: ReadonlyArray<PermissionMode>;
+	readonly capabilities?: HarnessCapabilities;
 	readonly defaultPermissions?: PermissionMode;
 	readonly onCall?: (opts: ExecOpts) => void;
 }
 
 const ALL_MODES: ReadonlyArray<PermissionMode> = ['skip', 'accept-edits', 'read-only', 'prompt'];
+
+const defaultCapabilities = (permissions: ReadonlyArray<PermissionMode>): HarnessCapabilities => ({
+	loadSession: false,
+	mcp: { http: false, sse: false },
+	prompt: { image: false, audio: false, embeddedContext: false },
+	session: { list: false, resume: false, close: false },
+	factory: { permissions, toolEvents: false },
+});
 
 /**
  * Test double for `Harness`. Cycles through `responses` on each `exec`/`stream`
@@ -33,9 +43,11 @@ export const scriptedHarness = <Name extends string>(
 		return r;
 	};
 
+	const capabilities = options.capabilities ?? defaultCapabilities(options.supports ?? ALL_MODES);
+
 	return {
 		name,
-		supports: options.supports ?? ALL_MODES,
+		capabilities,
 		defaultPermissions: options.defaultPermissions,
 		exec: (opts: ExecOpts) =>
 			Effect.gen(function* () {

@@ -164,7 +164,6 @@ const makeService = ({
 		recordRunEnd: (args) =>
 			sql`UPDATE run SET ended_at = ${Date.now()}, status = ${args.status}, error_tag = ${args.errorTag ?? null}, error_message = ${args.errorMessage ?? null} WHERE id = ${runId}`.pipe(
 				sqlError('failed to update run row'),
-				Effect.asVoid,
 			),
 
 		recordStepStart: (args) =>
@@ -197,7 +196,6 @@ const makeService = ({
 		recordStepEnd: (args) =>
 			sql`UPDATE step SET ended_at = ${Date.now()}, status = ${args.status} WHERE run_id = ${runId} AND ord = ${args.ord}`.pipe(
 				sqlError('failed to update step row'),
-				Effect.asVoid,
 			),
 
 		recordIterStart: (args) =>
@@ -230,7 +228,6 @@ const makeService = ({
 			const untilPassed = args.untilPassed === undefined ? null : args.untilPassed ? 1 : 0;
 			return sql`UPDATE iter SET ended_at = ${Date.now()}, exit_code = ${args.exitCode}, until_passed = ${untilPassed}, until_output = ${args.untilOutput ?? null}, files_changed = ${args.filesChanged ?? null} WHERE run_id = ${runId} AND step_ord = ${args.stepOrd} AND n = ${args.n}`.pipe(
 				sqlError('failed to update iter row'),
-				Effect.asVoid,
 			);
 		},
 
@@ -239,7 +236,6 @@ const makeService = ({
 			const iter = 'iter' in event ? event.iter : null;
 			return sql`INSERT INTO event (run_id, ts, type, step_id, iter, payload) VALUES (${runId}, ${Date.now()}, ${event.type}, ${stepId}, ${iter}, ${JSON.stringify(event)})`.pipe(
 				sqlError('failed to insert event row'),
-				Effect.asVoid,
 			);
 		},
 
@@ -252,9 +248,15 @@ const makeService = ({
 const updateLatestSymlink = (runsDir: string, runId: RunId, fs: FileSystem.FileSystem) => {
 	if (process.platform === 'win32') return Effect.void;
 	const link = `${runsDir}/latest`;
+	const logRemoveFail = Effect.catchAll((cause: unknown) =>
+		Effect.logDebug(`updateLatestSymlink: remove(${link}) failed (likely missing)`, cause),
+	);
+	const logSymlinkFail = Effect.catchAll((cause: unknown) =>
+		Effect.logDebug(`updateLatestSymlink: symlink(${runId} -> ${link}) failed`, cause),
+	);
 	return fs
 		.remove(link)
-		.pipe(Effect.ignore, Effect.zipRight(fs.symlink(runId, link)), Effect.ignore);
+		.pipe(logRemoveFail, Effect.zipRight(fs.symlink(runId, link)), logSymlinkFail);
 };
 
 const buildWorkspace = (

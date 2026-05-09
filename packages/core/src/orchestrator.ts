@@ -1,5 +1,6 @@
 import { FileSystem, Path, type CommandExecutor } from '@effect/platform';
 import { Effect, Stream } from 'effect';
+import { CapabilityMismatchError, matchRequirements } from './capabilities.ts';
 import {
 	HarnessExecError,
 	MissingHarnessError,
@@ -336,6 +337,7 @@ export const runFactoryEffect = (
 					);
 				}
 				const harness = yield* registry.resolve(harnessName);
+				const supportedPermissions = harness.capabilities.factory.permissions;
 				const permissions = resolvePermissions(
 					runOpts.permissions,
 					loaded,
@@ -343,13 +345,26 @@ export const runFactoryEffect = (
 					factoryOpts,
 					harness,
 				);
-				if (!harness.supports.includes(permissions)) {
+				if (!supportedPermissions.includes(permissions)) {
 					return yield* Effect.fail(
 						new UnsupportedPermissionError({
-							message: `harness '${harnessName}' does not support permission mode '${permissions}' (supported: ${harness.supports.join(', ') || '(none)'})`,
+							message: `harness '${harnessName}' does not support permission mode '${permissions}' (supported: ${supportedPermissions.join(', ') || '(none)'})`,
 							harness: harnessName,
 							requested: permissions,
-							supported: harness.supports,
+							supported: supportedPermissions,
+						}),
+					);
+				}
+				const missing = matchRequirements(
+					harness.capabilities,
+					entry.options.requires ?? loaded.frontmatter.requires,
+				);
+				if (missing.length > 0) {
+					return yield* Effect.fail(
+						new CapabilityMismatchError({
+							message: `harness '${harnessName}' is missing required capabilities: ${missing.join(', ')}`,
+							harness: harnessName,
+							missing,
 						}),
 					);
 				}

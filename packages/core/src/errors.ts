@@ -1,6 +1,7 @@
 import { Data } from 'effect';
+import type { CapabilityMismatchError } from './capabilities.ts';
 import type { HarnessName, StepId } from './ids.ts';
-import type { PermissionMode } from './types.ts';
+import type { PermissionMode } from './permissionMode.ts';
 
 /** Reading or parsing a step markdown file failed. */
 export class StepLoadError extends Data.TaggedError('StepLoadError')<{
@@ -95,4 +96,5 @@ export type FactoryError =
 	| PrdLoadError
 	| ConfigLoadError
 	| RunRecordingError
-	| UnsupportedPermissionError;
+	| UnsupportedPermissionError
+	| CapabilityMismatchError;

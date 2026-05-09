@@ -20,7 +20,13 @@ export const copilotBuildArgs = (
 export const copilot = createSubprocessHarness({
 	name: 'copilot',
 	bin: 'copilot',
-	supports: copilotSupports,
 	defaultPermissions: 'skip',
+	capabilities: {
+		loadSession: false,
+		mcp: { http: false, sse: false },
+		prompt: { image: false, audio: false, embeddedContext: false },
+		session: { list: false, resume: false, close: false },
+		factory: { permissions: copilotSupports, toolEvents: false },
+	},
 	buildArgs: copilotBuildArgs,
 });

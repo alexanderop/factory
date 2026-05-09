@@ -24,7 +24,13 @@ export const claudeBuildArgs = (
 export const claudeCode = createSubprocessHarness({
 	name: 'claude-code',
 	bin: 'claude',
-	supports: claudeSupports,
 	defaultPermissions: 'skip',
+	capabilities: {
+		loadSession: true,
+		mcp: { http: true, sse: true },
+		prompt: { image: true, audio: false, embeddedContext: true },
+		session: { list: true, resume: true, close: false },
+		factory: { permissions: claudeSupports, toolEvents: true },
+	},
 	buildArgs: claudeBuildArgs,
 });
