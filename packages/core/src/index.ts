@@ -16,6 +16,8 @@ export {
 	HarnessSpawnError,
 	MissingHarnessError,
 	PrdLoadError,
+	ResumeMismatchError,
+	ResumeUnavailableError,
 	RunRecordingError,
 	StepIdleTimeoutError,
 	StepLoadError,
@@ -26,7 +28,7 @@ export {
 export { factory } from './factory.ts';
 export { formatErrorMessage, withFriendlyErrors } from './error-handler.ts';
 export { recordTaggedError } from './observability.ts';
-export { runFactoryEffect } from './orchestrator.ts';
+export { resumeFactoryEffect, runFactoryEffect } from './orchestrator.ts';
 export { NoOtelLayer, OtelLayer } from './otel.ts';
 export {
 	ConsoleDisplay,
@@ -54,12 +56,22 @@ export {
 	type IterStartArgs,
 	LiveRunWorkspace,
 	type RunEndArgs,
+	type RunResumeArgs,
 	type RunStartArgs,
 	RunWorkspace,
 	type RunWorkspaceService,
 	type StepEndArgs,
 	type StepStartArgs,
 } from './services/RunWorkspace.ts';
+export {
+	planResume,
+	type PipelineStepRef,
+	readRun,
+	readStep,
+	type ResumePlan,
+	type RunRecord,
+	type StepRecord,
+} from './services/runManifest.ts';
 export {
 	FileStepLoader,
 	InMemoryStepLoader,
@@ -86,6 +98,7 @@ export type {
 	HarnessExecRequirements,
 	HarnessTokenUsage,
 	LoadedStep,
+	ResumeOptions,
 	RunOptions,
 	RunState,
 	StepEntry,

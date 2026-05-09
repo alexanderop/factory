@@ -1,7 +1,14 @@
 import { Args, Command, Options } from '@effect/cli';
-import { Path } from '@effect/platform';
+import { FileSystem, Path } from '@effect/platform';
 import { Effect, Option, Predicate } from 'effect';
-import { ConfigLoadError, type Factory, PermissionMode } from '@factory/core';
+import {
+	ConfigLoadError,
+	type Factory,
+	PermissionMode,
+	readRun,
+	ResumeUnavailableError,
+	type RunRecordingError,
+} from '@factory/core';
 
 const VERSION = '0.0.0';
 
@@ -141,6 +148,82 @@ const runCommand = Command.make(
 		}),
 );
 
+const resolveRunId = (runsDir: string, runIdArg: string) =>
+	Effect.gen(function* () {
+		if (runIdArg !== 'latest') return runIdArg;
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		return yield* fs.readLink(path.join(runsDir, 'latest')).pipe(
+			Effect.mapError(
+				(e) =>
+					new ResumeUnavailableError({
+						message: `failed to resolve 'latest' symlink in ${runsDir}: ${e.message}`,
+						reason: 'not-found',
+					}),
+			),
+		);
+	});
+
+const resumeCommand = Command.make(
+	'resume',
+	{
+		runId: Args.text({ name: 'run-id' }).pipe(
+			Args.withDescription('Run id to resume, or "latest" for the most recent run'),
+		),
+		cwd: cwdOption,
+		noOtel: noOtelOption,
+		idleTimeout: idleTimeoutOption,
+		permissions: permissionsOption,
+	},
+	({ runId: runIdArg, cwd: cwdOpt, noOtel, idleTimeout, permissions }) =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const path = yield* Path.Path;
+			const cwd = Option.getOrUndefined(cwdOpt) ?? path.resolve(process.cwd());
+			const idleTimeoutMs = Option.getOrUndefined(Option.map(idleTimeout, (s) => s * 1000));
+			const permissionsMode = Option.getOrUndefined(permissions);
+
+			const runsDir = path.join(cwd, '.factory', 'runs');
+			const resolvedRunId = yield* resolveRunId(runsDir, runIdArg);
+			const runDir = path.join(runsDir, resolvedRunId);
+			const runJsonExists = yield* fs.exists(runDir).pipe(
+				Effect.mapError(
+					(e) =>
+						new ResumeUnavailableError({
+							message: `failed to stat ${runDir}: ${e.message}`,
+							reason: 'not-found',
+						}),
+				),
+			);
+			if (!runJsonExists) {
+				return yield* Effect.fail(
+					new ResumeUnavailableError({
+						message: `run dir not found: ${runDir}`,
+						reason: 'not-found',
+					}),
+				);
+			}
+			const runRecord = yield* readRun(path.join(runDir, 'run.json')).pipe(
+				Effect.mapError(
+					(e: RunRecordingError) =>
+						new ResumeUnavailableError({
+							message: `failed to read run.json for '${resolvedRunId}': ${e.message}`,
+							reason: 'not-found',
+						}),
+				),
+			);
+
+			const factoryDef = yield* loadFactoryConfig(cwd, runRecord.pipeline);
+			yield* factoryDef.resumeEffect({
+				runId: runRecord.id,
+				cwd,
+				idleTimeoutMs,
+				permissions: permissionsMode,
+				otel: !noOtel,
+			});
+		}),
+);
+
 const rootCommand = Command.make('factory', {}, () =>
 	Effect.sync(() => {
 		console.log(`factory v${VERSION} — software factory pipelines`);
@@ -148,7 +231,7 @@ const rootCommand = Command.make('factory', {}, () =>
 	}),
 );
 
-export const factoryCli = rootCommand.pipe(Command.withSubcommands([runCommand]));
+export const factoryCli = rootCommand.pipe(Command.withSubcommands([runCommand, resumeCommand]));
 
 export const cli = Command.run(factoryCli, {
 	name: 'factory',

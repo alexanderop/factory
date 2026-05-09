@@ -84,6 +84,20 @@ export class UnsupportedPermissionError extends Data.TaggedError('UnsupportedPer
 	readonly supported: ReadonlyArray<PermissionMode>;
 }> {}
 
+/** Pipeline shape on disk (recorded run) does not match the current factory config. */
+export class ResumeMismatchError extends Data.TaggedError('ResumeMismatchError')<{
+	readonly message: string;
+	readonly stepOrd: number;
+	readonly recordedStepId: StepId;
+	readonly pipelineStepId: StepId;
+}> {}
+
+/** A run cannot be resumed (e.g. already complete, or not found). */
+export class ResumeUnavailableError extends Data.TaggedError('ResumeUnavailableError')<{
+	readonly message: string;
+	readonly reason: 'already-complete' | 'not-found' | 'in-progress';
+}> {}
+
 export type FactoryError =
 	| StepLoadError
 	| HarnessNotFoundError
@@ -97,4 +111,6 @@ export type FactoryError =
 	| ConfigLoadError
 	| RunRecordingError
 	| UnsupportedPermissionError
-	| CapabilityMismatchError;
+	| CapabilityMismatchError
+	| ResumeMismatchError
+	| ResumeUnavailableError;

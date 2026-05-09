@@ -5,6 +5,8 @@ import type { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
 import type { FactoryEvent } from '../types.ts';
 import {
 	type IterRecord,
+	readRun,
+	readStep,
 	type RunRecord,
 	type StepRecord,
 	writeIter as writeIterEffect,
@@ -19,6 +21,10 @@ export interface RunStartArgs {
 	readonly prdSource: string;
 	readonly prdContent: string;
 	readonly factoryFile?: string;
+}
+
+export interface RunResumeArgs {
+	readonly fromStepOrd: number;
 }
 
 export interface RunEndArgs {
@@ -69,6 +75,7 @@ export interface RunWorkspaceService {
 	readonly runId: RunId;
 	readonly runDir: string;
 	readonly recordRunStart: (args: RunStartArgs) => Effect.Effect<void, RunRecordingError>;
+	readonly recordRunResume: (args: RunResumeArgs) => Effect.Effect<RunRecord, RunRecordingError>;
 	readonly recordRunEnd: (args: RunEndArgs) => Effect.Effect<void, RunRecordingError>;
 	readonly recordStepStart: (args: StepStartArgs) => Effect.Effect<void, RunRecordingError>;
 	readonly recordStepEnd: (args: StepEndArgs) => Effect.Effect<void, RunRecordingError>;
@@ -120,14 +127,29 @@ interface MakeServiceArgs {
 	readonly runDir: string;
 	readonly fs: FileSystem.FileSystem;
 	readonly path: Path.Path;
+	readonly hydrated?: {
+		readonly runRecord: RunRecord;
+		readonly stepEntries: ReadonlyArray<StepEntry>;
+	};
 }
 
-const makeService = ({ runId, runDir, fs, path }: MakeServiceArgs): RunWorkspaceService => {
+const makeService = ({
+	runId,
+	runDir,
+	fs,
+	path,
+	hydrated,
+}: MakeServiceArgs): RunWorkspaceService => {
 	const stepEntries = new Map<number, StepEntry>();
 	const iterPathsByKey = new Map<string, IterPaths>();
 	const runPath = path.join(runDir, 'run.json');
 	const eventsPath = path.join(runDir, 'events.jsonl');
-	let runRecord: RunRecord | undefined;
+	let runRecord: RunRecord | undefined = hydrated?.runRecord;
+	if (hydrated) {
+		for (const entry of hydrated.stepEntries) {
+			stepEntries.set(entry.record.ord, entry);
+		}
+	}
 
 	const provideFs = Effect.provideService(FileSystem.FileSystem, fs);
 	const writeRun = (p: string, value: RunRecord) => writeRunEffect(p, value).pipe(provideFs);
@@ -207,6 +229,27 @@ const makeService = ({ runId, runDir, fs, path }: MakeServiceArgs): RunWorkspace
 				};
 				runRecord = record;
 				yield* writeRun(runPath, record);
+			}),
+
+		recordRunResume: (args) =>
+			Effect.gen(function* () {
+				const current = yield* requireRun();
+				const next: RunRecord = {
+					id: current.id,
+					pipeline: current.pipeline,
+					...(current.defaultHarness === undefined
+						? {}
+						: { defaultHarness: current.defaultHarness }),
+					cwd: current.cwd,
+					prdSource: current.prdSource,
+					...(current.factoryFile === undefined ? {} : { factoryFile: current.factoryFile }),
+					startedAt: current.startedAt,
+					status: 'running',
+				};
+				runRecord = next;
+				yield* writeRun(runPath, next);
+				yield* Effect.logDebug(`run resumed from step ord ${args.fromStepOrd}`);
+				return next;
 			}),
 
 		recordRunEnd: (args) =>
@@ -351,6 +394,52 @@ const buildWorkspace = (runId: RunId, runDir: string) =>
 		return makeService({ runId, runDir, fs, path });
 	});
 
+const hydrateStepEntries = (runDir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const stepsRoot = path.join(runDir, 'steps');
+		const exists = yield* fs
+			.exists(stepsRoot)
+			.pipe(Effect.mapError(toRecordingError(`failed to stat ${stepsRoot}`, stepsRoot)));
+		const empty: ReadonlyArray<StepEntry> = [];
+		if (!exists) return empty;
+		const subdirs = yield* fs
+			.readDirectory(stepsRoot)
+			.pipe(Effect.mapError(toRecordingError(`failed to read ${stepsRoot}`, stepsRoot)));
+		const entries: StepEntry[] = [];
+		for (const name of subdirs) {
+			const dir = path.join(stepsRoot, name);
+			const stepJsonPath = path.join(dir, 'step.json');
+			const has = yield* fs
+				.exists(stepJsonPath)
+				.pipe(Effect.mapError(toRecordingError(`failed to stat ${stepJsonPath}`, stepJsonPath)));
+			if (!has) continue;
+			const record = yield* readStep(stepJsonPath);
+			entries.push({ dir, path: stepJsonPath, record });
+		}
+		const sorted: ReadonlyArray<StepEntry> = entries.toSorted(
+			(a, b) => a.record.ord - b.record.ord,
+		);
+		return sorted;
+	});
+
+const buildResumedWorkspace = (runId: RunId, runDir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const runJsonPath = path.join(runDir, 'run.json');
+		const runRecord = yield* readRun(runJsonPath);
+		const stepEntries = yield* hydrateStepEntries(runDir);
+		return makeService({
+			runId,
+			runDir,
+			fs,
+			path,
+			hydrated: { runRecord, stepEntries },
+		});
+	});
+
 interface LiveLayerArgs {
 	readonly runId: RunId;
 	readonly cwd: string;
@@ -370,6 +459,19 @@ export const LiveRunWorkspace = {
 				const service = yield* buildWorkspace(args.runId, runDir);
 				yield* updateLatestSymlink(runsDir, args.runId, fs);
 				return service;
+			}),
+		),
+
+	resumed: (
+		args: LiveLayerArgs,
+	): Layer.Layer<RunWorkspace, RunRecordingError, FileSystem.FileSystem | Path.Path> =>
+		Layer.scoped(
+			RunWorkspace,
+			Effect.gen(function* () {
+				const path = yield* Path.Path;
+				const runsDir = path.join(args.cwd, '.factory', 'runs');
+				const runDir = path.join(runsDir, args.runId);
+				return yield* buildResumedWorkspace(args.runId, runDir);
 			}),
 		),
 };

@@ -199,6 +199,16 @@ export interface RunOptions {
 	readonly otel?: boolean;
 }
 
+export interface ResumeOptions {
+	readonly runId: RunId;
+	readonly cwd?: string;
+	readonly idleTimeoutMs?: number;
+	readonly permissions?: PermissionMode;
+	readonly onStep?: (event: FactoryEvent) => void;
+	readonly onError?: (event: Extract<FactoryEvent, { type: 'error' }>) => void;
+	readonly otel?: boolean;
+}
+
 export interface StepEntry {
 	readonly id: string;
 	readonly source: string;
@@ -214,4 +224,6 @@ export interface Factory<Names extends string = string, StepIds extends string =
 	) => Factory<Names, StepIds | Id>;
 	readonly run: (options: RunOptions) => Promise<void>;
 	readonly runEffect: (options: RunOptions) => Effect.Effect<void, FactoryError>;
+	readonly resume: (options: ResumeOptions) => Promise<void>;
+	readonly resumeEffect: (options: ResumeOptions) => Effect.Effect<void, FactoryError>;
 }

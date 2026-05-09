@@ -102,7 +102,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 								Effect.tagMetrics('outcome', 'error'),
 							),
 						),
-						Effect.withSpan('factory.harness.spawn', {
+						Effect.withSpan(`factory.harness.spawn`, {
 							kind: 'producer',
 							attributes: {
 								'factory.harness': config.name,
@@ -141,7 +141,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 				: events;
 
 		return withTimeout.pipe(
-			Stream.withSpan('factory.harness.stream', {
+			Stream.withSpan(`factory.harness.stream`, {
 				attributes: {
 					'factory.harness': config.name,
 					'factory.permission.mode': opts.permissions,

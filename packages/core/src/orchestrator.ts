@@ -19,6 +19,7 @@ import {
 	HarnessExecError,
 	MissingHarnessError,
 	PrdLoadError,
+	ResumeUnavailableError,
 	StepIdleTimeoutError,
 	StepMaxItersError,
 	UnsupportedPermissionError,
@@ -26,9 +27,15 @@ import {
 	type HarnessSpawnError,
 	type RunRecordingError,
 } from './errors.ts';
+import { planResume, readStep, type ResumePlan } from './services/runManifest.ts';
 import { harnessOtelEnv } from './harnessOtelEnv.ts';
-import { HarnessName, PipelineName, StepId, type RunId } from './ids.ts';
-import { describeForSpan, recordTaggedError, toolInputAttributes } from './observability.ts';
+import { HarnessName, PipelineName, type RunId, StepId } from './ids.ts';
+import {
+	describeForSpan,
+	recordTaggedError,
+	toolInputAttributes,
+	toolOutputAttributes,
+} from './observability.ts';
 import { Display, type DisplayService } from './services/Display.ts';
 import { EventEmitter, type EventEmitterService } from './services/EventEmitter.ts';
 import { HarnessRegistry } from './services/HarnessRegistry.ts';
@@ -44,6 +51,7 @@ import type {
 	Harness,
 	LoadedStep,
 	PermissionMode,
+	ResumeOptions,
 	RunOptions,
 	StepEntry,
 	StepOptions,
@@ -134,6 +142,13 @@ interface ToolSpanEntry {
 	readonly startedAt: number;
 }
 
+interface IterStreamResult {
+	readonly result: ExecResult;
+	readonly toolFailures: number;
+}
+
+type ExitReason = 'assistant_end' | 'idle_timeout' | 'error' | 'subprocess_exit_nonzero';
+
 const streamHarnessIter = ({
 	runId,
 	harness,
@@ -146,7 +161,7 @@ const streamHarnessIter = ({
 	emitter,
 	display,
 }: StreamHarnessArgs): Effect.Effect<
-	ExecResult,
+	IterStreamResult,
 	HarnessExecError | HarnessSpawnError | StepIdleTimeoutError | RunRecordingError,
 	CommandExecutor.CommandExecutor
 > =>
@@ -156,7 +171,26 @@ const streamHarnessIter = ({
 		const toolSpans = new Map<string, ToolSpanEntry>();
 		let exitCode = 0;
 
+		let assistantMessageCount = 0;
+		let toolCalls = 0;
+		let toolCallsFailed = 0;
+		const toolCallsCancelled = 0;
+		let bytesStdout = 0;
+		let bytesStderr = 0;
+		let resultEventCount = 0;
+
 		const iterSpan = yield* Effect.option(Effect.currentSpan);
+		const annotateIter = (key: string, value: unknown) => {
+			if (iterSpan._tag === 'Some') iterSpan.value.attribute(key, value);
+		};
+		const eventOnIter = (
+			name: string,
+			startTime: bigint,
+			attrs?: Record<string, string | number | boolean>,
+		) => {
+			if (iterSpan._tag === 'Some') iterSpan.value.event(name, startTime, attrs);
+		};
+
 		const otelEnv =
 			iterSpan._tag === 'Some'
 				? harnessOtelEnv({
@@ -185,162 +219,213 @@ const streamHarnessIter = ({
 				{ concurrency: 'unbounded', discard: true },
 			);
 
-		yield* Stream.runForEach(harness.stream(optsWithEnv), (event) =>
-			Effect.gen(function* () {
-				switch (event.type) {
-					case 'stdout': {
-						stdoutLines.push(event.line);
-						yield* workspace.appendStdout(stepOrd, n, `${event.line}\n`);
-						yield* display.harnessLine(stepId, 'stdout', event.line);
-						return;
-					}
-					case 'stderr': {
-						stderrLines.push(event.line);
-						yield* workspace.appendStderr(stepOrd, n, `${event.line}\n`);
-						yield* display.harnessLine(stepId, 'stderr', event.line);
-						return;
-					}
-					case 'exit': {
-						exitCode = event.code;
-						return;
-					}
-					case 'assistant.message': {
-						stdoutLines.push(event.text);
-						yield* workspace.appendStdout(stepOrd, n, `${event.text}\n`);
-						yield* display.harnessLine(stepId, 'stdout', event.text);
-						yield* Metric.increment(assistantMessagesTotal);
-						yield* persistAndEmit({
-							type: 'assistant.message',
-							runId,
-							step: stepId,
-							iter: n,
-							text: event.text,
-						});
-						return;
-					}
-					case 'tool.start': {
-						const { summary: inputSummary, bytes: inputBytes } = describeForSpan(event.input);
-						const span = yield* Effect.makeSpan('factory.harness.tool', {
-							attributes: {
-								'tool.name': event.name,
-								'tool.id': event.id,
-								'tool.input.summary': inputSummary,
-								'tool.input.bytes': inputBytes,
-								'factory.run.id': runId,
-								'factory.step': stepId,
-								'factory.iter': n,
-								...toolInputAttributes(event.name, event.input),
-							},
-						});
-						const startedAt = yield* Clock.currentTimeMillis;
-						toolSpans.set(event.id, { span, name: event.name, startedAt });
-						yield* persistAndEmit({
-							type: 'tool.start',
-							runId,
-							step: stepId,
-							iter: n,
-							toolCallId: event.id,
-							tool: event.name,
-							inputSummary,
-							inputBytes,
-						});
-						return;
-					}
-					case 'tool.end': {
-						const entry = toolSpans.get(event.id);
-						if (!entry) {
-							yield* Effect.logWarning(`tool.end for unknown tool id ${event.id} (parser desync?)`);
+		const annotateExitReasonOnError = <A, E extends { readonly _tag: string }, R>(
+			eff: Effect.Effect<A, E, R>,
+		): Effect.Effect<A, E, R> =>
+			eff.pipe(
+				Effect.tapError((error) =>
+					Effect.sync(() => {
+						annotateIter(
+							'factory.iter.exit.reason',
+							error._tag === 'StepIdleTimeoutError' ? 'idle_timeout' : 'error',
+						);
+					}),
+				),
+			);
+
+		yield* annotateExitReasonOnError(
+			Stream.runForEach(harness.stream(optsWithEnv), (event) =>
+				Effect.gen(function* () {
+					switch (event.type) {
+						case 'stdout': {
+							stdoutLines.push(event.line);
+							bytesStdout += Buffer.byteLength(event.line, 'utf8') + 1;
+							yield* workspace.appendStdout(stepOrd, n, `${event.line}\n`);
+							yield* display.harnessLine(stepId, 'stdout', event.line);
 							return;
 						}
-						const endedAt = yield* Clock.currentTimeMillis;
-						const durationMs = endedAt - entry.startedAt;
-						const { summary: outputSummary, bytes: outputBytes } = describeForSpan(event.output);
-						entry.span.attribute('tool.ok', event.ok);
-						entry.span.attribute('tool.output.summary', outputSummary);
-						entry.span.attribute('tool.output.bytes', outputBytes);
-						entry.span.attribute('tool.duration_ms', durationMs);
-						entry.span.end(
-							BigInt(endedAt) * 1_000_000n,
-							event.ok ? Exit.void : Exit.fail(new Error('tool errored')),
-						);
-						toolSpans.delete(event.id);
-						yield* Metric.increment(toolCallsTotal).pipe(
-							Effect.tagMetrics('tool', entry.name),
-							Effect.tagMetrics('ok', event.ok ? 'true' : 'false'),
-						);
-						yield* Metric.update(toolCallDurationMs, durationMs).pipe(
-							Effect.tagMetrics('tool', entry.name),
-						);
-						yield* persistAndEmit({
-							type: 'tool.end',
-							runId,
-							step: stepId,
-							iter: n,
-							toolCallId: event.id,
-							tool: entry.name,
-							ok: event.ok,
-							outputSummary,
-							outputBytes,
-							durationMs,
-						});
-						return;
-					}
-					case 'result': {
-						yield* Effect.annotateCurrentSpan({
-							'factory.iter.cost_usd': event.costUsd ?? 0,
-							'factory.iter.tokens.input': event.tokens?.input ?? 0,
-							'factory.iter.tokens.output': event.tokens?.output ?? 0,
-							'factory.iter.tokens.cache_read': event.tokens?.cacheRead ?? 0,
-							'factory.iter.tokens.cache_create': event.tokens?.cacheCreate ?? 0,
-							'factory.iter.harness_duration_ms': event.durationMs,
-							'factory.iter.model': event.model ?? '',
-							'factory.iter.ok': event.ok,
-						});
-						const model = event.model ?? '';
-						const tokensIncrement = (kind: string, amount: number) =>
-							Metric.incrementBy(tokensTotal, amount).pipe(
-								Effect.tagMetrics('kind', kind),
-								Effect.tagMetrics('model', model),
-							);
-						if (event.tokens) {
-							yield* tokensIncrement('input', event.tokens.input);
-							yield* tokensIncrement('output', event.tokens.output);
-							if (event.tokens.cacheRead !== undefined) {
-								yield* tokensIncrement('cache_read', event.tokens.cacheRead);
-							}
-							if (event.tokens.cacheCreate !== undefined) {
-								yield* tokensIncrement('cache_create', event.tokens.cacheCreate);
-							}
+						case 'stderr': {
+							stderrLines.push(event.line);
+							bytesStderr += Buffer.byteLength(event.line, 'utf8') + 1;
+							yield* workspace.appendStderr(stepOrd, n, `${event.line}\n`);
+							yield* display.harnessLine(stepId, 'stderr', event.line);
+							return;
 						}
-						if (event.costUsd !== undefined && event.costUsd > 0) {
-							yield* Metric.incrementBy(costMicroUsd, Math.round(event.costUsd * 1_000_000)).pipe(
-								Effect.tagMetrics('model', model),
-							);
+						case 'exit': {
+							exitCode = event.code;
+							return;
 						}
-						yield* persistAndEmit({
-							type: 'iter.result',
-							runId,
-							step: stepId,
-							iter: n,
-							ok: event.ok,
-							costUsd: event.costUsd,
-							tokens: event.tokens,
-							model: event.model,
-							durationMs: event.durationMs,
-						});
-						return;
+						case 'assistant.message': {
+							stdoutLines.push(event.text);
+							bytesStdout += Buffer.byteLength(event.text, 'utf8') + 1;
+							assistantMessageCount += 1;
+							yield* workspace.appendStdout(stepOrd, n, `${event.text}\n`);
+							yield* display.harnessLine(stepId, 'stdout', event.text);
+							yield* Metric.increment(assistantMessagesTotal);
+							const ts = yield* Clock.currentTimeMillis;
+							eventOnIter('assistant.message', BigInt(ts) * 1_000_000n, {
+								bytes: Buffer.byteLength(event.text, 'utf8'),
+							});
+							yield* persistAndEmit({
+								type: 'assistant.message',
+								runId,
+								step: stepId,
+								iter: n,
+								text: event.text,
+							});
+							return;
+						}
+						case 'tool.start': {
+							const { summary: inputSummary, bytes: inputBytes } = describeForSpan(event.input);
+							const span = yield* Effect.makeSpan(`factory.harness.tool ${event.name}`, {
+								attributes: {
+									'tool.name': event.name,
+									'tool.id': event.id,
+									'tool.input.summary': inputSummary,
+									'tool.input.bytes': inputBytes,
+									'factory.run.id': runId,
+									'factory.step': stepId,
+									'factory.iter': n,
+									...toolInputAttributes(event.name, event.input),
+								},
+							});
+							const startedAt = yield* Clock.currentTimeMillis;
+							toolSpans.set(event.id, { span, name: event.name, startedAt });
+							toolCalls += 1;
+							eventOnIter('tool.start', BigInt(startedAt) * 1_000_000n, {
+								'tool.id': event.id,
+								'tool.name': event.name,
+							});
+							yield* persistAndEmit({
+								type: 'tool.start',
+								runId,
+								step: stepId,
+								iter: n,
+								toolCallId: event.id,
+								tool: event.name,
+								inputSummary,
+								inputBytes,
+							});
+							return;
+						}
+						case 'tool.end': {
+							const entry = toolSpans.get(event.id);
+							if (!entry) {
+								yield* Effect.logWarning(
+									`tool.end for unknown tool id ${event.id} (parser desync?)`,
+								);
+								return;
+							}
+							const endedAt = yield* Clock.currentTimeMillis;
+							const durationMs = endedAt - entry.startedAt;
+							const { summary: outputSummary, bytes: outputBytes } = describeForSpan(event.output);
+							entry.span.attribute('tool.ok', event.ok);
+							entry.span.attribute('tool.output.summary', outputSummary);
+							entry.span.attribute('tool.output.bytes', outputBytes);
+							entry.span.attribute('tool.duration_ms', durationMs);
+							const outputAttrs = toolOutputAttributes(entry.name, event.output, event.ok);
+							for (const [key, value] of Object.entries(outputAttrs)) {
+								entry.span.attribute(key, value);
+							}
+							entry.span.end(
+								BigInt(endedAt) * 1_000_000n,
+								event.ok ? Exit.void : Exit.fail(new Error('tool errored')),
+							);
+							toolSpans.delete(event.id);
+							if (!event.ok) toolCallsFailed += 1;
+							yield* Metric.increment(toolCallsTotal).pipe(
+								Effect.tagMetrics('tool', entry.name),
+								Effect.tagMetrics('ok', event.ok ? 'true' : 'false'),
+							);
+							yield* Metric.update(toolCallDurationMs, durationMs).pipe(
+								Effect.tagMetrics('tool', entry.name),
+							);
+							eventOnIter('tool.end', BigInt(endedAt) * 1_000_000n, {
+								'tool.id': event.id,
+								'tool.name': entry.name,
+								'tool.ok': event.ok,
+							});
+							yield* persistAndEmit({
+								type: 'tool.end',
+								runId,
+								step: stepId,
+								iter: n,
+								toolCallId: event.id,
+								tool: entry.name,
+								ok: event.ok,
+								outputSummary,
+								outputBytes,
+								durationMs,
+							});
+							return;
+						}
+						case 'result': {
+							resultEventCount += 1;
+							const tokensInput = event.tokens?.input ?? 0;
+							const tokensOutput = event.tokens?.output ?? 0;
+							const tokensCacheRead = event.tokens?.cacheRead ?? 0;
+							const tokensCacheCreate = event.tokens?.cacheCreate ?? 0;
+							annotateIter('factory.iter.cost_usd', event.costUsd ?? 0);
+							annotateIter('factory.iter.tokens.input', tokensInput);
+							annotateIter('factory.iter.tokens.output', tokensOutput);
+							annotateIter('factory.iter.tokens.cache_read', tokensCacheRead);
+							annotateIter('factory.iter.tokens.cache_create', tokensCacheCreate);
+							annotateIter('factory.iter.harness_duration_ms', event.durationMs);
+							annotateIter('factory.iter.model', event.model ?? '');
+							annotateIter('factory.iter.ok', event.ok);
+							annotateIter('gen_ai.system', harness.name);
+							if (event.model) annotateIter('gen_ai.request.model', event.model);
+							annotateIter('gen_ai.usage.input_tokens', tokensInput);
+							annotateIter('gen_ai.usage.output_tokens', tokensOutput);
+							annotateIter('gen_ai.usage.cache_read_input_tokens', tokensCacheRead);
+							annotateIter('gen_ai.usage.cache_creation_input_tokens', tokensCacheCreate);
+							annotateIter('gen_ai.response.finish_reasons', [event.ok ? 'stop' : 'error']);
+							const model = event.model ?? '';
+							const tokensIncrement = (kind: string, amount: number) =>
+								Metric.incrementBy(tokensTotal, amount).pipe(
+									Effect.tagMetrics('kind', kind),
+									Effect.tagMetrics('model', model),
+								);
+							if (event.tokens) {
+								yield* tokensIncrement('input', event.tokens.input);
+								yield* tokensIncrement('output', event.tokens.output);
+								if (event.tokens.cacheRead !== undefined) {
+									yield* tokensIncrement('cache_read', event.tokens.cacheRead);
+								}
+								if (event.tokens.cacheCreate !== undefined) {
+									yield* tokensIncrement('cache_create', event.tokens.cacheCreate);
+								}
+							}
+							if (event.costUsd !== undefined && event.costUsd > 0) {
+								yield* Metric.incrementBy(costMicroUsd, Math.round(event.costUsd * 1_000_000)).pipe(
+									Effect.tagMetrics('model', model),
+								);
+							}
+							yield* persistAndEmit({
+								type: 'iter.result',
+								runId,
+								step: stepId,
+								iter: n,
+								ok: event.ok,
+								costUsd: event.costUsd,
+								tokens: event.tokens,
+								model: event.model,
+								durationMs: event.durationMs,
+							});
+							return;
+						}
 					}
-				}
-			}),
-		).pipe(
-			Effect.mapError((e) =>
-				e._tag === 'StepIdleTimeoutError'
-					? new StepIdleTimeoutError({
-							message: e.message,
-							step: stepId,
-							timeoutMs: e.timeoutMs,
-						})
-					: e,
+				}),
+			).pipe(
+				Effect.mapError((e) =>
+					e._tag === 'StepIdleTimeoutError'
+						? new StepIdleTimeoutError({
+								message: e.message,
+								step: stepId,
+								timeoutMs: e.timeoutMs,
+							})
+						: e,
+				),
 			),
 		);
 
@@ -369,6 +454,17 @@ const streamHarnessIter = ({
 			Effect.tagMetrics('stream', 'stderr'),
 		);
 
+		const exitReason: ExitReason =
+			exitCode !== 0 ? 'subprocess_exit_nonzero' : resultEventCount > 0 ? 'assistant_end' : 'error';
+
+		annotateIter('factory.iter.assistant.message.count', assistantMessageCount);
+		annotateIter('factory.iter.tool.calls', toolCalls);
+		annotateIter('factory.iter.tool.calls_failed', toolCallsFailed);
+		annotateIter('factory.iter.tool.calls_cancelled', toolCallsCancelled);
+		annotateIter('factory.iter.bytes.stdout', bytesStdout);
+		annotateIter('factory.iter.bytes.stderr', bytesStderr);
+		annotateIter('factory.iter.exit.reason', exitReason);
+
 		if (exitCode !== 0) {
 			return yield* Effect.fail(
 				new HarnessExecError({
@@ -380,7 +476,10 @@ const streamHarnessIter = ({
 			);
 		}
 
-		return { exitCode, stdout, stderr } satisfies ExecResult;
+		return {
+			result: { exitCode, stdout, stderr },
+			toolFailures: toolCallsFailed,
+		} satisfies IterStreamResult;
 	});
 
 const runStep = (
@@ -437,7 +536,7 @@ const runStep = (
 		let success = false;
 		for (let i = 1; i <= maxIters; i++) {
 			const iterStartedAt = yield* Clock.currentTimeMillis;
-			const iterPassed = yield* Effect.gen(function* () {
+			const iterOutcome = yield* Effect.gen(function* () {
 				const fullPrompt = yield* buildIterPrompt({
 					runDir: workspace.runDir,
 					stepOrd,
@@ -454,7 +553,7 @@ const runStep = (
 				});
 				yield* display.stepIter(stepId, i, maxIters);
 
-				const lastResult = yield* streamHarnessIter({
+				const { result: lastResult, toolFailures } = yield* streamHarnessIter({
 					runId,
 					harness,
 					harnessName,
@@ -473,38 +572,47 @@ const runStep = (
 					display,
 				});
 
+				let passed: boolean;
 				if (until === undefined) {
 					yield* workspace.recordIterEnd({ stepOrd, n: i, exitCode: lastResult.exitCode });
-					return true;
+					passed = true;
+				} else {
+					passed = yield* evaluator.evaluate(until, { step: stepId, cwd, lastResult }).pipe(
+						Effect.withSpan(`factory.until.eval`, {
+							attributes: {
+								'factory.until.predicate': until,
+								'factory.step': stepId,
+								'factory.iter': i,
+							},
+						}),
+					);
+					yield* Effect.annotateCurrentSpan('factory.until.passed', passed);
+					yield* workspace.recordIterEnd({
+						stepOrd,
+						n: i,
+						exitCode: lastResult.exitCode,
+						untilPassed: passed,
+					});
 				}
-				const passed = yield* evaluator.evaluate(until, { step: stepId, cwd, lastResult }).pipe(
-					Effect.withSpan('factory.until.eval', {
-						attributes: {
-							'factory.until.predicate': until,
-							'factory.step': stepId,
-							'factory.iter': i,
-						},
-					}),
-				);
-				yield* Effect.annotateCurrentSpan('factory.until.passed', passed);
-				yield* workspace.recordIterEnd({
-					stepOrd,
-					n: i,
-					exitCode: lastResult.exitCode,
-					untilPassed: passed,
-				});
+
+				if (toolFailures > 0) {
+					return yield* Effect.fail({ _tag: 'IterToolFailure' as const, passed });
+				}
 				return passed;
 			}).pipe(
-				Effect.withSpan('factory.iter', {
+				Effect.withSpan(`factory.iter`, {
 					attributes: {
 						'factory.run.id': runId,
 						'factory.step': stepId,
 						'factory.harness': args.harness.name,
+						'factory.permission.mode': permissions,
 						'factory.iter': i,
 						'factory.iter.max': maxIters,
 					},
 				}),
+				Effect.catchTag('IterToolFailure', (e) => Effect.succeed(e.passed)),
 			);
+			const iterPassed = iterOutcome;
 
 			const iterEndedAt = yield* Clock.currentTimeMillis;
 			const terminator = iterPassed ? (until === undefined ? 'no-until' : 'until') : 'iter';
@@ -554,14 +662,118 @@ const runStep = (
 		}
 	}).pipe(
 		recordTaggedError,
-		Effect.withSpan('factory.step', {
+		Effect.withSpan(`factory.step`, {
 			attributes: {
 				'factory.step': args.stepId,
 				'factory.harness': args.harness.name,
+				'factory.permission.mode': args.permissions,
 				'factory.run.id': args.runId,
 			},
 		}),
 	);
+
+interface StepLoopArgs {
+	readonly runId: RunId;
+	readonly factoryOpts: FactoryOptions;
+	readonly steps: ReadonlyArray<StepEntry>;
+	readonly cwd: string;
+	readonly prd: string;
+	readonly idleTimeoutMs: number | undefined;
+	readonly permissionsOverride: PermissionMode | undefined;
+	readonly skipBeforeOrd: number;
+	readonly defaultHarness: HarnessName | undefined;
+}
+
+const runStepLoop = (args: StepLoopArgs) =>
+	Effect.gen(function* () {
+		const loader = yield* StepLoader;
+		const registry = yield* HarnessRegistry;
+		const display = yield* Display;
+		const {
+			runId,
+			factoryOpts,
+			steps,
+			cwd,
+			prd,
+			idleTimeoutMs,
+			permissionsOverride,
+			skipBeforeOrd,
+			defaultHarness,
+		} = args;
+		for (const [ord, entry] of steps.entries()) {
+			const stepId = StepId.make(entry.id);
+			if (ord < skipBeforeOrd) {
+				yield* display.stepStart(stepId);
+				yield* display.stepEnd(stepId, true);
+				continue;
+			}
+			const loaded = yield* loader.load(entry.source, cwd).pipe(
+				Effect.withSpan(`factory.step.load`, {
+					attributes: {
+						'factory.step': stepId,
+						'factory.step.source': entry.source,
+					},
+				}),
+			);
+			const harnessName =
+				(entry.options.harness ? HarnessName.make(entry.options.harness) : undefined) ??
+				loaded.frontmatter.harness ??
+				defaultHarness;
+			if (!harnessName) {
+				return yield* Effect.fail(
+					new MissingHarnessError({
+						message: `step '${stepId}' has no harness (factory({harness}), step option, or frontmatter required)`,
+						step: stepId,
+					}),
+				);
+			}
+			const harness = yield* registry.resolve(harnessName);
+			const supportedPermissions = harness.capabilities.factory.permissions;
+			const permissions = resolvePermissions(
+				permissionsOverride,
+				loaded,
+				entry.options,
+				factoryOpts,
+				harness,
+			);
+			if (!supportedPermissions.includes(permissions)) {
+				return yield* Effect.fail(
+					new UnsupportedPermissionError({
+						message: `harness '${harnessName}' does not support permission mode '${permissions}' (supported: ${supportedPermissions.join(', ') || '(none)'})`,
+						harness: harnessName,
+						requested: permissions,
+						supported: supportedPermissions,
+					}),
+				);
+			}
+			const missing = matchRequirements(
+				harness.capabilities,
+				entry.options.requires ?? loaded.frontmatter.requires,
+			);
+			if (missing.length > 0) {
+				return yield* Effect.fail(
+					new CapabilityMismatchError({
+						message: `harness '${harnessName}' is missing required capabilities: ${missing.join(', ')}`,
+						harness: harnessName,
+						missing,
+					}),
+				);
+			}
+			yield* runStep({
+				runId,
+				stepOrd: ord,
+				stepId,
+				loaded,
+				harness,
+				harnessName,
+				options: entry.options,
+				cwd,
+				prd,
+				idleTimeoutMs,
+				permissions,
+			});
+		}
+	});
 
 export const runFactoryEffect = (
 	factoryOpts: FactoryOptions,
@@ -583,13 +795,14 @@ export const runFactoryEffect = (
 	Effect.gen(function* () {
 		const display = yield* Display;
 		const emitter = yield* EventEmitter;
-		const loader = yield* StepLoader;
-		const registry = yield* HarnessRegistry;
 		const workspace = yield* RunWorkspace;
 
 		const runId = workspace.runId;
 		const pipeline = PipelineName.make(factoryOpts.name);
 		const cwd = runOpts.cwd ?? process.cwd();
+
+		const defaultHarness = factoryOpts.harness ? HarnessName.make(factoryOpts.harness) : undefined;
+		const runPermissions = runOpts.permissions ?? factoryOpts.permissions;
 
 		yield* Effect.annotateCurrentSpan({
 			'factory.run.id': runId,
@@ -597,6 +810,8 @@ export const runFactoryEffect = (
 			'factory.cwd': cwd,
 			'factory.prd.source': runOpts.prd,
 			'factory.steps.count': steps.length,
+			...(defaultHarness ? { 'factory.harness': defaultHarness } : {}),
+			...(runPermissions ? { 'factory.permission.mode': runPermissions } : {}),
 		});
 
 		yield* display.runStart(pipeline, runId);
@@ -604,8 +819,6 @@ export const runFactoryEffect = (
 		const runStartedAt = yield* Clock.currentTimeMillis;
 
 		const prd = yield* resolvePrdContent(runOpts.prd, cwd);
-
-		const defaultHarness = factoryOpts.harness ? HarnessName.make(factoryOpts.harness) : undefined;
 
 		yield* workspace.recordRunStart({
 			pipeline,
@@ -615,77 +828,6 @@ export const runFactoryEffect = (
 			prdContent: prd,
 		});
 		yield* emitAndRecord(emitter, workspace, { type: 'run.start', runId, pipeline });
-
-		const stepBody = Effect.gen(function* () {
-			for (const [ord, entry] of steps.entries()) {
-				const stepId = StepId.make(entry.id);
-				const loaded = yield* loader.load(entry.source, cwd).pipe(
-					Effect.withSpan('factory.step.load', {
-						attributes: {
-							'factory.step': stepId,
-							'factory.step.source': entry.source,
-						},
-					}),
-				);
-				const harnessName =
-					(entry.options.harness ? HarnessName.make(entry.options.harness) : undefined) ??
-					loaded.frontmatter.harness ??
-					defaultHarness;
-				if (!harnessName) {
-					return yield* Effect.fail(
-						new MissingHarnessError({
-							message: `step '${stepId}' has no harness (factory({harness}), step option, or frontmatter required)`,
-							step: stepId,
-						}),
-					);
-				}
-				const harness = yield* registry.resolve(harnessName);
-				const supportedPermissions = harness.capabilities.factory.permissions;
-				const permissions = resolvePermissions(
-					runOpts.permissions,
-					loaded,
-					entry.options,
-					factoryOpts,
-					harness,
-				);
-				if (!supportedPermissions.includes(permissions)) {
-					return yield* Effect.fail(
-						new UnsupportedPermissionError({
-							message: `harness '${harnessName}' does not support permission mode '${permissions}' (supported: ${supportedPermissions.join(', ') || '(none)'})`,
-							harness: harnessName,
-							requested: permissions,
-							supported: supportedPermissions,
-						}),
-					);
-				}
-				const missing = matchRequirements(
-					harness.capabilities,
-					entry.options.requires ?? loaded.frontmatter.requires,
-				);
-				if (missing.length > 0) {
-					return yield* Effect.fail(
-						new CapabilityMismatchError({
-							message: `harness '${harnessName}' is missing required capabilities: ${missing.join(', ')}`,
-							harness: harnessName,
-							missing,
-						}),
-					);
-				}
-				yield* runStep({
-					runId,
-					stepOrd: ord,
-					stepId,
-					loaded,
-					harness,
-					harnessName,
-					options: entry.options,
-					cwd,
-					prd,
-					idleTimeoutMs: runOpts.idleTimeoutMs,
-					permissions,
-				});
-			}
-		});
 
 		const recordRunMetrics = (outcome: 'ok' | 'error') =>
 			Effect.gen(function* () {
@@ -700,7 +842,17 @@ export const runFactoryEffect = (
 				);
 			});
 
-		yield* stepBody.pipe(
+		yield* runStepLoop({
+			runId,
+			factoryOpts,
+			steps,
+			cwd,
+			prd,
+			idleTimeoutMs: runOpts.idleTimeoutMs,
+			permissionsOverride: runOpts.permissions,
+			skipBeforeOrd: 0,
+			defaultHarness,
+		}).pipe(
 			Effect.tapError((error) =>
 				emitAndRecord(emitter, workspace, { type: 'error', runId, error }),
 			),
@@ -719,7 +871,175 @@ export const runFactoryEffect = (
 		yield* emitAndRecord(emitter, workspace, { type: 'run.end', runId });
 		yield* display.runEnd(runId);
 	}).pipe(
-		Effect.withSpan('factory.run', {
+		Effect.withSpan(`factory.run`, {
+			attributes: { 'factory.pipeline': factoryOpts.name },
+		}),
+	);
+
+const readPrdFromRunDir = (runDir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const prdPath = path.join(runDir, 'prd.md');
+		return yield* fs.readFileString(prdPath).pipe(
+			Effect.mapError(
+				(e) =>
+					new PrdLoadError({
+						message: `failed to read PRD from run dir: ${e.message}`,
+						path: prdPath,
+					}),
+			),
+		);
+	});
+
+const loadRecordedSteps = (runDir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const stepsRoot = path.join(runDir, 'steps');
+		const exists = yield* fs.exists(stepsRoot).pipe(
+			Effect.mapError(
+				(e) =>
+					new ResumeUnavailableError({
+						message: `failed to stat ${stepsRoot}: ${e.message}`,
+						reason: 'not-found',
+					}),
+			),
+		);
+		if (!exists) return [];
+		const subdirs = yield* fs.readDirectory(stepsRoot).pipe(
+			Effect.mapError(
+				(e) =>
+					new ResumeUnavailableError({
+						message: `failed to read ${stepsRoot}: ${e.message}`,
+						reason: 'not-found',
+					}),
+			),
+		);
+		const records = [];
+		for (const name of subdirs) {
+			const stepJsonPath = path.join(stepsRoot, name, 'step.json');
+			const has = yield* fs.exists(stepJsonPath).pipe(
+				Effect.mapError(
+					(e) =>
+						new ResumeUnavailableError({
+							message: `failed to stat ${stepJsonPath}: ${e.message}`,
+							reason: 'not-found',
+						}),
+				),
+			);
+			if (!has) continue;
+			records.push(yield* readStep(stepJsonPath));
+		}
+		return records.toSorted((a, b) => a.ord - b.ord);
+	});
+
+export const resumeFactoryEffect = (
+	factoryOpts: FactoryOptions,
+	steps: ReadonlyArray<StepEntry>,
+	resumeOpts: ResumeOptions,
+): Effect.Effect<
+	ResumePlan,
+	FactoryError,
+	| Display
+	| EventEmitter
+	| HarnessRegistry
+	| StepLoader
+	| UntilEvaluator
+	| RunWorkspace
+	| FileSystem.FileSystem
+	| Path.Path
+	| CommandExecutor.CommandExecutor
+> =>
+	Effect.gen(function* () {
+		const display = yield* Display;
+		const emitter = yield* EventEmitter;
+		const workspace = yield* RunWorkspace;
+
+		const runId = workspace.runId;
+		const pipeline = PipelineName.make(factoryOpts.name);
+		const cwd = resumeOpts.cwd ?? process.cwd();
+
+		const recorded = yield* loadRecordedSteps(workspace.runDir);
+		const pipelineRefs = steps.map((entry, ord) => ({ ord, stepId: StepId.make(entry.id) }));
+		const plan = yield* planResume(recorded, pipelineRefs);
+		if (plan.kind === 'already-done') {
+			return yield* Effect.fail(
+				new ResumeUnavailableError({
+					message: `run '${runId}' is already complete; nothing to resume`,
+					reason: 'already-complete',
+				}),
+			);
+		}
+
+		const defaultHarness = factoryOpts.harness ? HarnessName.make(factoryOpts.harness) : undefined;
+		const runPermissions = resumeOpts.permissions ?? factoryOpts.permissions;
+
+		yield* Effect.annotateCurrentSpan({
+			'factory.run.id': runId,
+			'factory.pipeline': pipeline,
+			'factory.cwd': cwd,
+			'factory.steps.count': steps.length,
+			'factory.resume.from_ord': plan.stepOrd,
+			...(defaultHarness ? { 'factory.harness': defaultHarness } : {}),
+			...(runPermissions ? { 'factory.permission.mode': runPermissions } : {}),
+		});
+
+		yield* display.runStart(pipeline, runId);
+
+		const runStartedAt = yield* Clock.currentTimeMillis;
+
+		const prd = yield* readPrdFromRunDir(workspace.runDir);
+
+		yield* workspace.recordRunResume({ fromStepOrd: plan.stepOrd });
+		yield* emitAndRecord(emitter, workspace, { type: 'run.start', runId, pipeline });
+
+		const recordRunMetrics = (outcome: 'ok' | 'error') =>
+			Effect.gen(function* () {
+				const endedAt = yield* Clock.currentTimeMillis;
+				yield* Metric.increment(runsTotal).pipe(
+					Effect.tagMetrics('outcome', outcome),
+					Effect.tagMetrics('pipeline', pipeline),
+					Effect.tagMetrics('resumed', 'true'),
+				);
+				yield* Metric.update(runDurationMs, endedAt - runStartedAt).pipe(
+					Effect.tagMetrics('outcome', outcome),
+					Effect.tagMetrics('pipeline', pipeline),
+					Effect.tagMetrics('resumed', 'true'),
+				);
+			});
+
+		yield* runStepLoop({
+			runId,
+			factoryOpts,
+			steps,
+			cwd,
+			prd,
+			idleTimeoutMs: resumeOpts.idleTimeoutMs,
+			permissionsOverride: resumeOpts.permissions,
+			skipBeforeOrd: plan.stepOrd,
+			defaultHarness,
+		}).pipe(
+			Effect.tapError((error) =>
+				emitAndRecord(emitter, workspace, { type: 'error', runId, error }),
+			),
+			Effect.tapError((error) =>
+				workspace.recordRunEnd({
+					status: 'error',
+					errorTag: error._tag,
+					errorMessage: error.message,
+				}),
+			),
+			Effect.tapError(() => recordRunMetrics('error')),
+		);
+
+		yield* workspace.recordRunEnd({ status: 'ok' });
+		yield* recordRunMetrics('ok');
+		yield* emitAndRecord(emitter, workspace, { type: 'run.end', runId });
+		yield* display.runEnd(runId);
+		return plan;
+	}).pipe(
+		Effect.withSpan(`factory.resume`, {
 			attributes: { 'factory.pipeline': factoryOpts.name },
 		}),
 	);

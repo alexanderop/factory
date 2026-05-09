@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { NodeContext } from '@effect/platform-node';
 import { Effect, Layer } from 'effect';
 import { RunId } from './ids.ts';
-import { runFactoryEffect } from './orchestrator.ts';
+import { resumeFactoryEffect, runFactoryEffect } from './orchestrator.ts';
 import { NoOtelLayer, OtelLayer } from './otel.ts';
 import { ConsoleDisplay } from './services/Display.ts';
 import { callbackEventEmitter } from './services/EventEmitter.ts';
@@ -14,6 +14,7 @@ import type {
 	Factory,
 	FactoryOptions,
 	Harness,
+	ResumeOptions,
 	RunOptions,
 	StepEntry,
 	StepOptions,
@@ -22,10 +23,21 @@ import type {
 interface RuntimeContext {
 	readonly runId: RunId;
 	readonly cwd: string;
+	readonly resume: boolean;
 }
 
-const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RunOptions, ctx: RuntimeContext) => {
+interface RuntimeOpts {
+	readonly otel?: boolean;
+	readonly onStep?: RunOptions['onStep'];
+	readonly onError?: RunOptions['onError'];
+}
+
+const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RuntimeOpts, ctx: RuntimeContext) => {
 	const otelEnabled = runOpts.otel !== false && process.env.OTEL_SDK_DISABLED !== 'true';
+
+	const workspaceLayer = ctx.resume
+		? LiveRunWorkspace.resumed({ runId: ctx.runId, cwd: ctx.cwd })
+		: LiveRunWorkspace.layer({ runId: ctx.runId, cwd: ctx.cwd });
 
 	return Layer.mergeAll(
 		ConsoleDisplay.layer,
@@ -36,7 +48,7 @@ const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RunOptions, ctx: Runti
 		harnessRegistryLayer(opts.harnesses ?? []),
 		FileStepLoader.layer,
 		DefaultUntilEvaluator.layer,
-		LiveRunWorkspace.layer({ runId: ctx.runId, cwd: ctx.cwd }),
+		workspaceLayer,
 		otelEnabled ? OtelLayer : NoOtelLayer,
 	).pipe(Layer.provideMerge(NodeContext.layer));
 };
@@ -51,7 +63,16 @@ export function factory<const Hs extends ReadonlyArray<Harness>>(
 		const runId = RunId.make(randomUUID());
 		const cwd = runOpts.cwd ?? process.cwd();
 		return runFactoryEffect(opts, steps, runOpts).pipe(
-			Effect.provide(buildRuntimeLayer(opts, runOpts, { runId, cwd })),
+			Effect.provide(buildRuntimeLayer(opts, runOpts, { runId, cwd, resume: false })),
+		);
+	};
+
+	const resumeEffect = (resumeOpts: ResumeOptions) => {
+		const cwd = resumeOpts.cwd ?? process.cwd();
+		return resumeFactoryEffect(opts, steps, resumeOpts).pipe(
+			Effect.provide(
+				buildRuntimeLayer(opts, resumeOpts, { runId: resumeOpts.runId, cwd, resume: true }),
+			),
 		);
 	};
 
@@ -68,6 +89,10 @@ export function factory<const Hs extends ReadonlyArray<Harness>>(
 		runEffect,
 		run: async (runOpts) => {
 			await Effect.runPromise(runEffect(runOpts));
+		},
+		resumeEffect,
+		resume: async (resumeOpts) => {
+			await Effect.runPromise(resumeEffect(resumeOpts));
 		},
 	});
 

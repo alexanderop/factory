@@ -36,7 +36,7 @@ const toolScript: ReadonlyArray<HarnessEvent> = [
 ];
 
 describe('tool-call telemetry', () => {
-	it.effect('emits one factory.harness.tool span per tool call with structural attrs', () =>
+	it.effect('emits one factory.harness.tool <name> span per tool call with structural attrs', () =>
 		Effect.gen(function* () {
 			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
 			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
@@ -57,17 +57,19 @@ describe('tool-call telemetry', () => {
 			).pipe(Effect.provide(layer));
 
 			const spans = yield* getFinishedSpans();
-			const toolSpans = spans.filter((s) => s.name === 'factory.harness.tool');
+			const toolSpans = spans.filter((s) => s.name.startsWith('factory.harness.tool '));
 			strictEqual(toolSpans.length, 2);
 
 			const readSpan = toolSpans.find((s) => s.attributes['tool.name'] === 'Read');
 			assertTrue(readSpan !== undefined);
+			strictEqual(readSpan.name, 'factory.harness.tool Read');
 			deepStrictEqual(readSpan.attributes['tool.id'], 't1');
 			deepStrictEqual(readSpan.attributes['tool.file_path'], '/tmp/x');
 			deepStrictEqual(readSpan.attributes['tool.ok'], true);
 
 			const bashSpan = toolSpans.find((s) => s.attributes['tool.name'] === 'Bash');
 			assertTrue(bashSpan !== undefined);
+			strictEqual(bashSpan.name, 'factory.harness.tool Bash');
 			deepStrictEqual(bashSpan.attributes['tool.cmd.head'], 'ls');
 		}).pipe(Effect.provide(OtelTestLayer)),
 	);

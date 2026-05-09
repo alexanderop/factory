@@ -1,6 +1,6 @@
 import { FileSystem } from '@effect/platform';
 import { Effect, Schema } from 'effect';
-import { RunRecordingError } from '../errors.ts';
+import { ResumeMismatchError, RunRecordingError } from '../errors.ts';
 import { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
 
 export const RunStatus = Schema.Literal('running', 'ok', 'error');
@@ -140,4 +140,52 @@ export const readIter = (path: string) =>
 			.readFileString(path)
 			.pipe(Effect.mapError(toRecordingError(`failed to read ${path}`, path)));
 		return yield* decodeIter(text, path);
+	});
+
+export type ResumePlan =
+	| { readonly kind: 'already-done' }
+	| { readonly kind: 'start-at'; readonly stepOrd: number };
+
+export interface PipelineStepRef {
+	readonly ord: number;
+	readonly stepId: StepId;
+}
+
+/**
+ * Decide where to resume a run by walking the pipeline in declared order.
+ *
+ * - If `pipelineSteps[ord]` has a matching `recordedSteps[ord]` and its
+ *   `stepId` differs, we refuse with `ResumeMismatchError` — the pipeline
+ *   shape changed since the run started.
+ * - Otherwise, the first ord without a recorded `'ok'` status is the
+ *   resume point. A missing record at a given ord (e.g. ralph started, was
+ *   ^C'd before refactor's `step.json` was written) is also a resume point.
+ * - All `'ok'` → `already-done` (caller should refuse to resume).
+ */
+export const planResume = (
+	recordedSteps: ReadonlyArray<StepRecord>,
+	pipelineSteps: ReadonlyArray<PipelineStepRef>,
+): Effect.Effect<ResumePlan, ResumeMismatchError> =>
+	Effect.gen(function* () {
+		const byOrd = new Map(recordedSteps.map((s) => [s.ord, s] as const));
+		for (const pipelineStep of pipelineSteps) {
+			const recorded = byOrd.get(pipelineStep.ord);
+			if (recorded === undefined) {
+				return { kind: 'start-at', stepOrd: pipelineStep.ord } satisfies ResumePlan;
+			}
+			if (recorded.stepId !== pipelineStep.stepId) {
+				return yield* Effect.fail(
+					new ResumeMismatchError({
+						message: `pipeline step at ord ${pipelineStep.ord} is '${pipelineStep.stepId}' but recorded run has '${recorded.stepId}'`,
+						stepOrd: pipelineStep.ord,
+						recordedStepId: recorded.stepId,
+						pipelineStepId: pipelineStep.stepId,
+					}),
+				);
+			}
+			if (recorded.status !== 'ok') {
+				return { kind: 'start-at', stepOrd: pipelineStep.ord } satisfies ResumePlan;
+			}
+		}
+		return { kind: 'already-done' } satisfies ResumePlan;
 	});
