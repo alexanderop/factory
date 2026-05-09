@@ -1,6 +1,7 @@
 import { NodeContext } from '@effect/platform-node';
+import { describe, expect, it } from '@effect/vitest';
+import { deepStrictEqual } from '@effect/vitest/utils';
 import { Effect } from 'effect';
-import { describe, expect, it } from 'vitest';
 import type { HarnessCapabilities } from './capabilities.ts';
 import { createSubprocessHarness } from './subprocess.ts';
 import type { PermissionMode } from './types.ts';
@@ -14,27 +15,25 @@ const baseCaps = (permissions: ReadonlyArray<PermissionMode>): HarnessCapabiliti
 });
 
 describe('createSubprocessHarness', () => {
-	it('passes the resolved permissions mode to buildArgs ctx', async () => {
-		const calls: { prompt: string; permissions: PermissionMode }[] = [];
-		const harness = createSubprocessHarness({
-			name: 'echo-harness',
-			bin: 'echo',
-			capabilities: baseCaps(['skip', 'read-only']),
-			defaultPermissions: 'skip',
-			buildArgs: (prompt, { permissions }) => {
-				calls.push({ prompt, permissions });
-				return [];
-			},
-		});
+	it.effect('passes the resolved permissions mode to buildArgs ctx', () =>
+		Effect.gen(function* () {
+			const calls: { prompt: string; permissions: PermissionMode }[] = [];
+			const harness = createSubprocessHarness({
+				name: 'echo-harness',
+				bin: 'echo',
+				capabilities: baseCaps(['skip', 'read-only']),
+				defaultPermissions: 'skip',
+				buildArgs: (prompt, { permissions }) => {
+					calls.push({ prompt, permissions });
+					return [];
+				},
+			});
 
-		await Effect.runPromise(
-			harness
-				.exec({ prompt: 'hi', permissions: 'read-only' })
-				.pipe(Effect.provide(NodeContext.layer)),
-		);
+			yield* harness.exec({ prompt: 'hi', permissions: 'read-only' });
 
-		expect(calls).toEqual([{ prompt: 'hi', permissions: 'read-only' }]);
-	});
+			deepStrictEqual(calls, [{ prompt: 'hi', permissions: 'read-only' }]);
+		}).pipe(Effect.provide(NodeContext.layer)),
+	);
 
 	it('exposes the configured permissions and defaultPermissions on the harness', () => {
 		const harness = createSubprocessHarness({
