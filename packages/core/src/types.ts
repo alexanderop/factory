@@ -1,5 +1,7 @@
 import type { CommandExecutor } from '@effect/platform';
 import { Schema, type Effect, type Stream } from 'effect';
+import type { HarnessCapabilities } from './capabilities.ts';
+import { StepRequirements } from './capabilities.ts';
 import type {
 	FactoryError,
 	HarnessExecError,
@@ -8,9 +10,9 @@ import type {
 } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
 import type { PipelineName, RunId } from './ids.ts';
+import { PermissionMode } from './permissionMode.ts';
 
-export const PermissionMode = Schema.Literal('skip', 'accept-edits', 'read-only', 'prompt');
-export type PermissionMode = typeof PermissionMode.Type;
+export { PermissionMode };
 
 export interface ExecOpts {
 	readonly prompt: string;
@@ -36,7 +38,7 @@ export type HarnessExecRequirements = CommandExecutor.CommandExecutor;
 
 export interface Harness<Name extends string = string> {
 	readonly name: Name;
-	readonly supports: ReadonlyArray<PermissionMode>;
+	readonly capabilities: HarnessCapabilities;
 	readonly defaultPermissions?: PermissionMode;
 	readonly exec: (
 		opts: ExecOpts,
@@ -60,6 +62,7 @@ export const StepFrontmatter = Schema.Struct({
 	until: Schema.optional(Schema.String),
 	maxIters: Schema.optional(Schema.Number),
 	permissions: Schema.optional(PermissionMode),
+	requires: Schema.optional(StepRequirements),
 });
 export type StepFrontmatter = typeof StepFrontmatter.Type;
 
@@ -76,6 +79,7 @@ export interface StepOptions<Names extends string = string> {
 	readonly until?: string;
 	readonly maxIters?: number;
 	readonly permissions?: PermissionMode;
+	readonly requires?: StepRequirements;
 }
 
 export type RunState = Record<string, unknown>;

@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { assertHelpSnapshot } from '@factory/core/testing';
 import { describe, expect, it } from 'vitest';
 import { copilot, copilotBuildArgs, copilotSupports } from './index.ts';
 
@@ -10,9 +12,12 @@ const copilotAvailable = (() => {
 	return probe.status === 0;
 })();
 
+const helpFixture = join(import.meta.dirname, '..', '__fixtures__', 'help.txt');
+const live = process.env.HARNESS_LIVE === '1';
+
 describe('copilot harness', () => {
 	it('declares its expected supported modes', () => {
-		expect(copilot.supports.toSorted()).toEqual(['accept-edits', 'skip']);
+		expect(copilot.capabilities.factory.permissions.toSorted()).toEqual(['accept-edits', 'skip']);
 	});
 
 	it('defaults to skip', () => {
@@ -29,5 +34,9 @@ describe('copilot harness', () => {
 			});
 			expect(result.status, `mode=${mode} args=${args.join(' ')} stderr=${result.stderr}`).toBe(0);
 		}
+	});
+
+	it.skipIf(!live)('copilot --help matches snapshot fixture', () => {
+		assertHelpSnapshot({ bin: 'copilot', fixturePath: helpFixture });
 	});
 });

@@ -1,4 +1,14 @@
 export {
+	CapabilityMismatchError,
+	FactoryCapabilities,
+	HarnessCapabilities,
+	matchRequirements,
+	McpCapabilities,
+	PromptCapabilities,
+	SessionCapabilities,
+	StepRequirements,
+} from './capabilities.ts';
+export {
 	ConfigLoadError,
 	type FactoryError,
 	HarnessExecError,

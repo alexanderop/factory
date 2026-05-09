@@ -22,7 +22,13 @@ export const codexBuildArgs = (
 export const codex = createSubprocessHarness({
 	name: 'codex',
 	bin: 'codex',
-	supports: codexSupports,
 	defaultPermissions: 'skip',
+	capabilities: {
+		loadSession: true,
+		mcp: { http: false, sse: false },
+		prompt: { image: true, audio: false, embeddedContext: false },
+		session: { list: false, resume: true, close: false },
+		factory: { permissions: codexSupports, toolEvents: false },
+	},
 	buildArgs: codexBuildArgs,
 });

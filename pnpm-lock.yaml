@@ -66,6 +66,12 @@ importers:
       '@factory/harness-claude-code':
         specifier: workspace:*
         version: link:../../packages/harness-claude-code
+      '@factory/harness-codex':
+        specifier: workspace:*
+        version: link:../../packages/harness-codex
+      '@factory/harness-copilot':
+        specifier: workspace:*
+        version: link:../../packages/harness-copilot
     devDependencies:
       tsx:
         specifier: ^4.19.2

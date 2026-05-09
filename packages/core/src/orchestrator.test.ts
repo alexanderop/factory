@@ -1,6 +1,7 @@
 import { NodeContext } from '@effect/platform-node';
 import { Cause, Effect, Exit, Layer, Ref } from 'effect';
 import { describe, expect, it } from 'vitest';
+import type { HarnessCapabilities } from './capabilities.ts';
 import { RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
 import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
@@ -262,6 +263,115 @@ Iterate until done.`,
 					true,
 				);
 			}
+		});
+	});
+
+	describe('capability requirements', () => {
+		it('fails with CapabilityMismatchError before spawning when a step requires a capability the harness lacks', async () => {
+			const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+			const eventsRef = Ref.unsafeMake<ReadonlyArray<FactoryEvent>>([]);
+
+			const calls: ExecOpts[] = [];
+			const limitedCaps: HarnessCapabilities = {
+				loadSession: false,
+				mcp: { http: false, sse: false },
+				prompt: { image: false, audio: false, embeddedContext: false },
+				session: { list: false, resume: false, close: false },
+				factory: {
+					permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
+					toolEvents: false,
+				},
+			};
+			const limitedHarness = scriptedHarness('claude-code', [{ stdout: 'never\n' }], {
+				capabilities: limitedCaps,
+				onCall: (opts) => calls.push(opts),
+			});
+
+			const layer = Layer.mergeAll(
+				SilentDisplay.layer(displayRef),
+				recordingEventEmitter.layer(eventsRef),
+				harnessRegistryLayer([limitedHarness]),
+				InMemoryStepLoader.layer(
+					new Map([
+						[
+							'./steps/only.md',
+							`---\nname: only\nrequires:\n  session:\n    resume: true\n---\nDo it.`,
+						],
+					]),
+				),
+				scriptedUntilEvaluator.layer([true]),
+				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
+			).pipe(Layer.provideMerge(NodeContext.layer));
+
+			const exit = await Effect.runPromiseExit(
+				runFactoryEffect(
+					{ name: 'sdd', harness: 'claude-code' },
+					[{ id: 'only', source: './steps/only.md', options: {} }],
+					{ prd: 'inline PRD text', cwd: process.cwd() },
+				).pipe(Effect.provide(layer)),
+			);
+
+			expect(Exit.isFailure(exit)).toBe(true);
+			if (Exit.isFailure(exit)) {
+				const failure = Cause.failureOption(exit.cause);
+				expect(failure._tag === 'Some' && failure.value._tag === 'CapabilityMismatchError').toBe(
+					true,
+				);
+				if (failure._tag === 'Some' && failure.value._tag === 'CapabilityMismatchError') {
+					expect(failure.value.missing).toEqual(['session.resume']);
+				}
+			}
+			expect(calls).toEqual([]);
+		});
+
+		it('passes when capabilities meet the step requirements', async () => {
+			const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+			const eventsRef = Ref.unsafeMake<ReadonlyArray<FactoryEvent>>([]);
+
+			const fullCaps: HarnessCapabilities = {
+				loadSession: true,
+				mcp: { http: true, sse: true },
+				prompt: { image: true, audio: false, embeddedContext: true },
+				session: { list: true, resume: true, close: false },
+				factory: {
+					permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
+					toolEvents: true,
+				},
+			};
+			const harness = scriptedHarness('claude-code', [{ stdout: 'ok\n' }], {
+				capabilities: fullCaps,
+			});
+
+			const layer = Layer.mergeAll(
+				SilentDisplay.layer(displayRef),
+				recordingEventEmitter.layer(eventsRef),
+				harnessRegistryLayer([harness]),
+				InMemoryStepLoader.layer(
+					new Map([
+						[
+							'./steps/only.md',
+							`---\nname: only\nrequires:\n  session:\n    resume: true\n  prompt:\n    image: true\n---\nDo it.`,
+						],
+					]),
+				),
+				scriptedUntilEvaluator.layer([true]),
+				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
+			).pipe(Layer.provideMerge(NodeContext.layer));
+
+			await Effect.runPromise(
+				runFactoryEffect(
+					{ name: 'sdd', harness: 'claude-code' },
+					[{ id: 'only', source: './steps/only.md', options: {} }],
+					{ prd: 'inline PRD text', cwd: process.cwd() },
+				).pipe(Effect.provide(layer)),
+			);
+
+			const events = await Effect.runPromise(Ref.get(eventsRef));
+			const ends = events.filter(
+				(e): e is Extract<FactoryEvent, { type: 'step.end' }> => e.type === 'step.end',
+			);
+			expect(ends).toHaveLength(1);
+			expect(ends[0]?.ok).toBe(true);
 		});
 	});
 

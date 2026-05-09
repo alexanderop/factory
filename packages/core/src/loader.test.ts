@@ -80,6 +80,45 @@ describe('StepLoader', () => {
 			expect(loaded.frontmatter.permissions).toBe('read-only');
 		});
 
+		it('parses a requires block with nested capability requirements', async () => {
+			const map = new Map([
+				[
+					'./steps/plan.md',
+					'---\nname: plan\nrequires:\n  session:\n    resume: true\n  prompt:\n    image: true\n---\nPlan body.',
+				],
+			]);
+
+			const program = Effect.gen(function* () {
+				const loader = yield* StepLoader;
+				return yield* loader.load('./steps/plan.md', '/irrelevant');
+			}).pipe(Effect.provide(InMemoryStepLoader.layer(map)));
+
+			const loaded = await Effect.runPromise(program);
+			expect(loaded.frontmatter.requires?.session?.resume).toBe(true);
+			expect(loaded.frontmatter.requires?.prompt?.image).toBe(true);
+		});
+
+		it('rejects requires fields with the wrong type as a schema error', async () => {
+			const map = new Map([
+				[
+					'./steps/plan.md',
+					'---\nname: plan\nrequires:\n  session:\n    resume: "yes"\n---\nPlan body.',
+				],
+			]);
+
+			const program = Effect.gen(function* () {
+				const loader = yield* StepLoader;
+				return yield* loader.load('./steps/plan.md', '/irrelevant');
+			}).pipe(Effect.provide(InMemoryStepLoader.layer(map)));
+
+			const exit = await Effect.runPromiseExit(program);
+			expect(Exit.isFailure(exit)).toBe(true);
+			if (Exit.isFailure(exit)) {
+				const failure = Cause.failureOption(exit.cause);
+				expect(failure._tag === 'Some' && failure.value instanceof StepLoadError).toBe(true);
+			}
+		});
+
 		it('rejects invalid permissions values with a schema error', async () => {
 			const map = new Map([
 				['./steps/plan.md', '---\nname: plan\npermissions: yolo\n---\nPlan body.'],
