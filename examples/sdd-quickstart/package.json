@@ -1,10 +1,10 @@
 {
 	"name": "sdd-quickstart",
 	"version": "0.0.0",
-	"type": "module",
 	"private": true,
+	"type": "module",
 	"scripts": {
-		"factory": "tsx ../../packages/cli/src/bin.ts"
+		"factory": "tsx ../../packages/cli/src/main.ts"
 	},
 	"dependencies": {
 		"@factory/core": "workspace:*",

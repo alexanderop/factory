@@ -46,11 +46,11 @@ Only edit files under src/. Run `pnpm test` between iterations.
 import { factory } from '@factory/core';
 
 export default factory({ name: 'sdd', harness: 'claude-code' })
-	.step('plan', './steps/plan.md')
-	.step('ralph', './steps/ralph.md', { harness: 'codex' })
-	.step('verify', './steps/verify.md')
-	.step('qa', './steps/qa.md')
-	.step('simplify', './steps/simplify.md');
+  .step('plan', './steps/plan.md')
+  .step('ralph', './steps/ralph.md', { harness: 'codex' })
+  .step('verify', './steps/verify.md')
+  .step('qa', './steps/qa.md')
+  .step('simplify', './steps/simplify.md');
 ```
 
 ## Observability
@@ -77,13 +77,13 @@ Disable with `--no-otel` or `OTEL_SDK_DISABLED=true`.
 
 ## Packages
 
-| Package                                                        | Description                                  |
-| -------------------------------------------------------------- | -------------------------------------------- |
-| [`@factory/core`](packages/core)                               | Builder, step runner, run context, OTel init |
-| [`@factory/cli`](packages/cli)                                 | `factory` CLI                                |
-| [`@factory/harness-claude-code`](packages/harness-claude-code) | Subprocess adapter for `claude`              |
-| [`@factory/harness-codex`](packages/harness-codex)             | Subprocess adapter for `codex`               |
-| [`@factory/harness-copilot`](packages/harness-copilot)         | Subprocess adapter for `copilot`             |
+| Package                                                        | Description                                         |
+| -------------------------------------------------------------- | --------------------------------------------------- |
+| [`@factory/core`](packages/core)                               | Builder, step runner, run context, OTel init        |
+| [`@factory/cli`](packages/cli)                                 | `factory` CLI                                       |
+| [`@factory/harness-claude-code`](packages/harness-claude-code) | Subprocess adapter for `claude`                     |
+| [`@factory/harness-codex`](packages/harness-codex)             | Subprocess adapter for `codex`                      |
+| [`@factory/harness-copilot`](packages/harness-copilot)         | Subprocess adapter for `copilot`                    |
 | [`@factory/steps-sdd`](packages/steps-sdd)                     | Reference SDD steps (plan/ralph/verify/qa/simplify) |
 
 ## Status

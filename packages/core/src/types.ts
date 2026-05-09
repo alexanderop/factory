@@ -1,85 +1,126 @@
+import type { CommandExecutor } from '@effect/platform';
+import type { Effect, Stream } from 'effect';
+import type {
+	FactoryError,
+	HarnessExecError,
+	HarnessSpawnError,
+	StepIdleTimeoutError,
+} from './errors.ts';
+
 export interface ExecOpts {
-	prompt: string;
-	cwd?: string;
-	env?: Record<string, string>;
-	timeoutMs?: number;
-	signal?: AbortSignal;
+	readonly prompt: string;
+	readonly cwd?: string;
+	readonly env?: Readonly<Record<string, string>>;
+	readonly idleTimeoutMs?: number;
 }
 
 export interface ExecResult {
-	exitCode: number;
-	stdout: string;
-	stderr: string;
+	readonly exitCode: number;
+	readonly stdout: string;
+	readonly stderr: string;
 }
 
 export type HarnessEvent =
-	| { type: 'stdout'; line: string }
-	| { type: 'stderr'; line: string }
-	| { type: 'tool'; name: string; input?: unknown }
-	| { type: 'exit'; code: number };
+	| { readonly type: 'stdout'; readonly line: string }
+	| { readonly type: 'stderr'; readonly line: string }
+	| { readonly type: 'tool'; readonly name: string; readonly input?: unknown }
+	| { readonly type: 'exit'; readonly code: number };
+
+export type HarnessExecRequirements = CommandExecutor.CommandExecutor;
 
 export interface Harness {
 	readonly name: string;
-	exec(opts: ExecOpts): Promise<ExecResult>;
-	stream(opts: ExecOpts): AsyncIterable<HarnessEvent>;
+	readonly exec: (
+		opts: ExecOpts,
+	) => Effect.Effect<
+		ExecResult,
+		HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
+		HarnessExecRequirements
+	>;
+	readonly stream: (
+		opts: ExecOpts,
+	) => Stream.Stream<
+		HarnessEvent,
+		HarnessSpawnError | StepIdleTimeoutError,
+		HarnessExecRequirements
+	>;
 }
 
 export interface StepFrontmatter {
-	name?: string;
-	harness?: string;
-	until?: string;
-	maxIters?: number;
+	readonly name?: string;
+	readonly harness?: string;
+	readonly until?: string;
+	readonly maxIters?: number;
 }
 
 export interface LoadedStep {
-	id: string;
-	path: string;
-	frontmatter: StepFrontmatter;
-	prompt: string;
+	readonly id: string;
+	readonly path: string;
+	readonly frontmatter: StepFrontmatter;
+	readonly prompt: string;
 }
 
 export interface StepOptions {
-	harness?: string;
-	until?: string;
-	maxIters?: number;
+	readonly harness?: string;
+	readonly until?: string;
+	readonly maxIters?: number;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: state bag is intentionally loose in v0
-export type RunState = Record<string, any>;
-
-export interface RunCtx {
-	runId: string;
-	pipeline: string;
-	state: RunState;
-	harness: Harness;
-	cwd: string;
-	prd: string;
-	emit: (event: FactoryEvent) => void;
-}
+export type RunState = Record<string, unknown>;
 
 export type FactoryEvent =
-	| { type: 'run.start'; runId: string; pipeline: string }
-	| { type: 'run.end'; runId: string }
-	| { type: 'step.start'; runId: string; step: string }
-	| { type: 'step.end'; runId: string; step: string; ok: boolean }
-	| { type: 'step.output'; runId: string; step: string; output: unknown }
-	| { type: 'error'; runId: string; step?: string; error: unknown };
+	| { readonly type: 'run.start'; readonly runId: string; readonly pipeline: string }
+	| { readonly type: 'run.end'; readonly runId: string }
+	| { readonly type: 'step.start'; readonly runId: string; readonly step: string }
+	| {
+			readonly type: 'step.iter';
+			readonly runId: string;
+			readonly step: string;
+			readonly iter: number;
+	  }
+	| {
+			readonly type: 'step.end';
+			readonly runId: string;
+			readonly step: string;
+			readonly ok: boolean;
+	  }
+	| {
+			readonly type: 'step.output';
+			readonly runId: string;
+			readonly step: string;
+			readonly output: unknown;
+	  }
+	| {
+			readonly type: 'error';
+			readonly runId: string;
+			readonly step?: string;
+			readonly error: unknown;
+	  };
 
 export interface FactoryOptions {
-	name: string;
-	harness?: string;
+	readonly name: string;
+	readonly harness?: string;
+	readonly harnesses?: ReadonlyArray<Harness>;
 }
 
 export interface RunOptions {
-	prd: string;
-	cwd?: string;
-	onStep?: (event: FactoryEvent) => void;
-	onError?: (event: Extract<FactoryEvent, { type: 'error' }>) => void;
-	otel?: boolean;
+	readonly prd: string;
+	readonly cwd?: string;
+	readonly idleTimeoutMs?: number;
+	readonly onStep?: (event: FactoryEvent) => void;
+	readonly onError?: (event: Extract<FactoryEvent, { type: 'error' }>) => void;
+	readonly otel?: boolean;
+}
+
+export interface StepEntry {
+	readonly id: string;
+	readonly source: string;
+	readonly options: StepOptions;
 }
 
 export interface Factory {
 	readonly name: string;
-	step(id: string, source: string, options?: StepOptions): Factory;
-	run(options: RunOptions): Promise<void>;
+	readonly step: (id: string, source: string, options?: StepOptions) => Factory;
+	readonly run: (options: RunOptions) => Promise<void>;
+	readonly runEffect: (options: RunOptions) => Effect.Effect<void, FactoryError>;
 }

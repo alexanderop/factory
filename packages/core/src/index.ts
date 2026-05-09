@@ -1,9 +1,53 @@
+export {
+	ConfigLoadError,
+	type FactoryError,
+	HarnessExecError,
+	HarnessNotFoundError,
+	HarnessSpawnError,
+	MissingHarnessError,
+	PrdLoadError,
+	StepIdleTimeoutError,
+	StepLoadError,
+	StepMaxItersError,
+	UntilEvalError,
+} from './errors.ts';
 export { factory } from './factory.ts';
-export { loadStep } from './loader.ts';
-export { initOtel, shutdownOtel } from './otel.ts';
-export { registerHarness, resolveHarness } from './registry.ts';
-export { createSubprocessHarness } from './subprocess.ts';
-export type { SubprocessHarnessConfig } from './subprocess.ts';
+export { formatErrorMessage, withFriendlyErrors } from './error-handler.ts';
+export { runFactoryEffect } from './orchestrator.ts';
+export { NoOtelLayer, OtelLayer } from './otel.ts';
+export {
+	ConsoleDisplay,
+	Display,
+	type DisplayEntry,
+	type DisplayService,
+	SilentDisplay,
+} from './services/Display.ts';
+export {
+	callbackEventEmitter,
+	EventEmitter,
+	type EventEmitterService,
+	noopEventEmitter,
+	recordingEventEmitter,
+} from './services/EventEmitter.ts';
+export {
+	harnessRegistryLayer,
+	HarnessRegistry,
+	type HarnessRegistryService,
+} from './services/HarnessRegistry.ts';
+export {
+	FileStepLoader,
+	InMemoryStepLoader,
+	StepLoader,
+	type StepLoaderService,
+} from './services/StepLoader.ts';
+export {
+	DefaultUntilEvaluator,
+	scriptedUntilEvaluator,
+	type UntilEvalCtx,
+	UntilEvaluator,
+	type UntilEvaluatorService,
+} from './services/UntilEvaluator.ts';
+export { createSubprocessHarness, type SubprocessHarnessConfig } from './subprocess.ts';
 export type {
 	ExecOpts,
 	ExecResult,
@@ -12,10 +56,11 @@ export type {
 	FactoryOptions,
 	Harness,
 	HarnessEvent,
+	HarnessExecRequirements,
 	LoadedStep,
-	RunCtx,
 	RunOptions,
 	RunState,
+	StepEntry,
 	StepFrontmatter,
 	StepOptions,
 } from './types.ts';

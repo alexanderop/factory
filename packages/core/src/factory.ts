@@ -1,23 +1,29 @@
-import { randomUUID } from 'node:crypto';
-import { trace } from '@opentelemetry/api';
-import { loadStep } from './loader.ts';
-import { resolveHarness } from './registry.ts';
-import type {
-	Factory,
-	FactoryEvent,
-	FactoryOptions,
-	LoadedStep,
-	RunOptions,
-	StepOptions,
-} from './types.ts';
+import { NodeContext } from '@effect/platform-node';
+import { Effect, Layer } from 'effect';
+import { runFactoryEffect } from './orchestrator.ts';
+import { NoOtelLayer, OtelLayer } from './otel.ts';
+import { ConsoleDisplay } from './services/Display.ts';
+import { callbackEventEmitter } from './services/EventEmitter.ts';
+import { harnessRegistryLayer } from './services/HarnessRegistry.ts';
+import { FileStepLoader } from './services/StepLoader.ts';
+import { DefaultUntilEvaluator } from './services/UntilEvaluator.ts';
+import type { Factory, FactoryOptions, RunOptions, StepEntry } from './types.ts';
 
-const tracer = trace.getTracer('factory');
+const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RunOptions) => {
+	const otelEnabled = runOpts.otel !== false && process.env.OTEL_SDK_DISABLED !== 'true';
 
-interface StepEntry {
-	id: string;
-	source: string;
-	options: StepOptions;
-}
+	return Layer.mergeAll(
+		ConsoleDisplay.layer,
+		callbackEventEmitter.layer({
+			onStep: runOpts.onStep,
+			onError: runOpts.onError,
+		}),
+		harnessRegistryLayer(opts.harnesses ?? []),
+		FileStepLoader.layer,
+		DefaultUntilEvaluator.layer,
+		otelEnabled ? OtelLayer : NoOtelLayer,
+	).pipe(Layer.provideMerge(NodeContext.layer));
+};
 
 export function factory(opts: FactoryOptions): Factory {
 	const steps: StepEntry[] = [];
@@ -28,96 +34,15 @@ export function factory(opts: FactoryOptions): Factory {
 			steps.push({ id, source, options: stepOptions ?? {} });
 			return self;
 		},
+		runEffect(runOpts) {
+			return runFactoryEffect(opts, steps, runOpts).pipe(
+				Effect.provide(buildRuntimeLayer(opts, runOpts)),
+			);
+		},
 		async run(runOpts) {
-			await runFactory(opts, steps, runOpts);
+			await Effect.runPromise(self.runEffect(runOpts));
 		},
 	};
 
 	return self;
-}
-
-async function runFactory(
-	factoryOpts: FactoryOptions,
-	steps: StepEntry[],
-	runOpts: RunOptions,
-): Promise<void> {
-	const runId = randomUUID();
-	const cwd = runOpts.cwd ?? process.cwd();
-	const emit = (event: FactoryEvent) => {
-		runOpts.onStep?.(event);
-		if (event.type === 'error') runOpts.onError?.(event);
-	};
-
-	await tracer.startActiveSpan(
-		'factory.run',
-		{ attributes: { 'factory.run.id': runId, 'factory.pipeline': factoryOpts.name } },
-		async (rootSpan) => {
-			emit({ type: 'run.start', runId, pipeline: factoryOpts.name });
-			try {
-				for (const entry of steps) {
-					const loaded = await loadStep(entry.source, cwd);
-					const harnessName =
-						entry.options.harness ?? loaded.frontmatter.harness ?? factoryOpts.harness;
-					if (!harnessName) {
-						throw new Error(
-							`step '${entry.id}' has no harness (set factory({ harness }), step option, or frontmatter)`,
-						);
-					}
-					await runStep({
-						runId,
-						pipeline: factoryOpts.name,
-						stepId: entry.id,
-						loaded,
-						harnessName,
-						cwd,
-						prd: runOpts.prd,
-						emit,
-					});
-				}
-				emit({ type: 'run.end', runId });
-			} catch (error) {
-				emit({ type: 'error', runId, error });
-				rootSpan.recordException(error as Error);
-				throw error;
-			} finally {
-				rootSpan.end();
-			}
-		},
-	);
-}
-
-interface RunStepArgs {
-	runId: string;
-	pipeline: string;
-	stepId: string;
-	loaded: LoadedStep;
-	harnessName: string;
-	cwd: string;
-	prd: string;
-	emit: (event: FactoryEvent) => void;
-}
-
-async function runStep(args: RunStepArgs): Promise<void> {
-	const { runId, stepId, loaded, harnessName, cwd, emit } = args;
-	const harness = resolveHarness(harnessName);
-
-	await tracer.startActiveSpan(
-		'factory.step',
-		{ attributes: { 'factory.step': stepId, 'factory.harness': harnessName } },
-		async (span) => {
-			emit({ type: 'step.start', runId, step: stepId });
-			try {
-				// TODO: actually run the harness, handle until/maxIters loop, write output to ctx.state.
-				throw new Error(
-					`step runner not implemented yet — would run '${stepId}' on '${harnessName}' with prompt of length ${loaded.prompt.length}`,
-				);
-			} catch (error) {
-				emit({ type: 'step.end', runId, step: stepId, ok: false });
-				span.recordException(error as Error);
-				throw error;
-			} finally {
-				span.end();
-			}
-		},
-	);
 }

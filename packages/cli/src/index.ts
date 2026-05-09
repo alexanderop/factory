@@ -1,1 +1,1 @@
-export { run } from './run.ts';
+export { cli, factoryCli } from './cli.ts';

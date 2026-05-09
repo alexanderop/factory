@@ -1,30 +1,19 @@
+import { NodeSdk } from '@effect/opentelemetry';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
-import { resourceFromAttributes } from '@opentelemetry/resources';
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { Layer } from 'effect';
 
-let sdk: NodeSDK | undefined;
+/**
+ * Effect-OTel layer that emits factory span trees via OTLP/gRPC.
+ *
+ * Defaults to localhost:4317 (the Aspire Dashboard's default). Override with
+ * standard OpenTelemetry env vars: `OTEL_EXPORTER_OTLP_ENDPOINT`,
+ * `OTEL_EXPORTER_OTLP_HEADERS`, etc.
+ */
+export const OtelLayer = NodeSdk.layer(() => ({
+	resource: { serviceName: 'factory' },
+	spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
+}));
 
-export interface InitOtelOptions {
-	enabled?: boolean;
-	serviceName?: string;
-}
-
-export function initOtel(options: InitOtelOptions = {}): void {
-	const enabled = options.enabled ?? process.env.OTEL_SDK_DISABLED !== 'true';
-	if (!enabled || sdk) return;
-
-	sdk = new NodeSDK({
-		resource: resourceFromAttributes({
-			[ATTR_SERVICE_NAME]: options.serviceName ?? 'factory',
-		}),
-		traceExporter: new OTLPTraceExporter(),
-	});
-	sdk.start();
-}
-
-export async function shutdownOtel(): Promise<void> {
-	if (!sdk) return;
-	await sdk.shutdown();
-	sdk = undefined;
-}
+/** No-op OTel layer used when --no-otel or OTEL_SDK_DISABLED=true. */
+export const NoOtelLayer = Layer.empty;

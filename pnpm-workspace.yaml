@@ -1,4 +1,6 @@
 packages: [ packages/*, examples/* ]
 allowBuilds:
-  esbuild: set this to true or false
-  protobufjs: set this to true or false
+  '@parcel/watcher': true
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true

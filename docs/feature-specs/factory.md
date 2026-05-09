@@ -43,10 +43,11 @@ Each step is a `.md` file under `.factory/steps/<name>.md` with frontmatter + pr
 ```markdown
 ---
 name: ralph
-harness: claude-code         # optional override
-until: tests pass            # exit predicate (eval'd by framework)
+harness: claude-code # optional override
+until: tests pass # exit predicate (eval'd by framework)
 maxIters: 10
 ---
+
 Keep iterating on the failing tests until the whole suite is green.
 Only edit files under src/. Run `pnpm test` between iterations.
 ```
@@ -55,14 +56,14 @@ TypeScript wires the graph:
 
 ```ts
 // .factory/factory.ts
-import { factory } from 'factory'
+import { factory } from 'factory';
 
 export default factory({ name: 'sdd', harness: 'claude-code' })
-  .step('plan',     './steps/plan.md')
-  .step('ralph',    './steps/ralph.md', { harness: 'codex' })  // override
-  .step('verify',   './steps/verify.md')
-  .step('qa',       './steps/qa.md')
-  .step('simplify', './steps/simplify.md')
+  .step('plan', './steps/plan.md')
+  .step('ralph', './steps/ralph.md', { harness: 'codex' }) // override
+  .step('verify', './steps/verify.md')
+  .step('qa', './steps/qa.md')
+  .step('simplify', './steps/simplify.md');
 ```
 
 ### Harness binding
@@ -77,15 +78,15 @@ Harness names map to subprocess adapters — `claude-code` → spawns `claude`, 
 
 ```ts
 interface Harness {
-  exec(opts: ExecOpts): Promise<ExecResult>
-  stream(opts: ExecOpts): AsyncIterable<HarnessEvent>
+  exec(opts: ExecOpts): Promise<ExecResult>;
+  stream(opts: ExecOpts): AsyncIterable<HarnessEvent>;
 }
 
 type HarnessEvent =
-  | { type: 'stdout', line: string }
-  | { type: 'stderr', line: string }
-  | { type: 'tool',   name: string, input?: unknown }
-  | { type: 'exit',   code: number }
+  | { type: 'stdout'; line: string }
+  | { type: 'stderr'; line: string }
+  | { type: 'tool'; name: string; input?: unknown }
+  | { type: 'exit'; code: number };
 ```
 
 Adapters shell out to the installed binary with a non-interactive flag (`claude -p`, `codex exec`, etc.). Streaming events are best-effort — adapters parse stdout for tool-call markers when the harness emits them, and fall back to raw lines otherwise. Sessions/multi-turn deferred to v1.
@@ -96,9 +97,9 @@ Steps read/write a single `ctx.state` bag. Loose typing in v0; TS users can cast
 
 ```ts
 factory({ name: 'sdd', harness: 'claude-code' })
-  .step('plan',  './steps/plan.md')      // writes ctx.state.slices
-  .step('ralph', './steps/ralph.md')     // reads slices, writes ctx.state.diff
-  .step('verify','./steps/verify.md')    // reads ctx.state.prd, ctx.state.diff
+  .step('plan', './steps/plan.md') // writes ctx.state.slices
+  .step('ralph', './steps/ralph.md') // reads slices, writes ctx.state.diff
+  .step('verify', './steps/verify.md'); // reads ctx.state.prd, ctx.state.diff
 ```
 
 Big artifacts live in the workspace filesystem (the harness already edits files there); `ctx.state` carries the small structured handles between steps (slice ids, status flags, summaries).
@@ -169,9 +170,9 @@ No built-in retry, no checkpoint/resume in v0. The factory emits lifecycle event
 ```ts
 factory.run({
   prd: './feature.md',
-  onStep:  (ev) => log(ev),       // start | end | output
+  onStep: (ev) => log(ev), // start | end | output
   onError: (ev) => Sentry.captureException(ev.error),
-})
+});
 ```
 
 This is the explicit v0 trade — power-user surface, less hand-holding. Checkpoint/resume is a candidate for v1 once we know which steps are most worth resuming.

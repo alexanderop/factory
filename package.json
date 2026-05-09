@@ -1,29 +1,38 @@
 {
 	"name": "factory",
-	"type": "module",
 	"private": true,
 	"license": "Apache-2.0",
-	"engines": {
-		"node": ">=22"
-	},
-	"packageManager": "pnpm@11.0.9",
+	"type": "module",
 	"scripts": {
 		"dev": "pnpm -r --parallel dev",
 		"build": "pnpm -r build",
-		"check": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format:check",
+		"check": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test",
 		"typecheck": "pnpm -r typecheck",
 		"lint": "oxlint",
 		"lint:fix": "oxlint --fix",
 		"format": "oxfmt",
-		"format:check": "oxfmt --check"
+		"format:check": "oxfmt --check",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"aspire:up": "docker run -d --rm --name factory-aspire -p 18888:18888 -p 4317:18889 -e DASHBOARD__OTLP__AUTHMODE=Unsecured -e DASHBOARD__FRONTEND__AUTHMODE=Unsecured mcr.microsoft.com/dotnet/aspire-dashboard:9.0 && echo 'Aspire Dashboard → http://localhost:18888'",
+		"aspire:down": "docker stop factory-aspire",
+		"aspire:logs": "docker logs -f factory-aspire",
+		"example": "pnpm --filter sdd-quickstart factory run sdd --prd ./feature.md"
 	},
 	"devDependencies": {
+		"@effect/vitest": "^0.29.0",
 		"@types/node": "^22.10.10",
+		"effect": "^3.21.2",
 		"oxfmt": "^0.48.0",
 		"oxlint": "^1.63.0",
 		"tsx": "^4.19.2",
-		"typescript": "^5.9.2"
+		"typescript": "^5.9.2",
+		"vitest": "^4.1.5"
 	},
+	"engines": {
+		"node": ">=22"
+	},
+	"packageManager": "pnpm@11.0.9",
 	"pnpm": {
 		"overrides": {
 			"typescript": "5.9.3"
