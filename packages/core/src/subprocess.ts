@@ -4,16 +4,42 @@ import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './err
 import { HarnessName, StepId } from './ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent } from './types.ts';
 
+/** State threaded through per-harness line parsers across calls. */
+export type ParserState = Record<string, unknown>;
+
+/** Per-harness structured-output parser. Returns new events and updated state. */
+export type ParseLine = (
+	line: string,
+	state: ParserState,
+) => { events: ReadonlyArray<HarnessEvent>; state: ParserState };
+
+/** Default parser: every line is emitted as a raw stdout/stderr event. */
+const identityParser: ParseLine = (line, state) => ({
+	events: [],
+	state,
+});
+
 export interface SubprocessHarnessConfig<Name extends string = string> {
 	readonly name: Name;
 	readonly bin: string;
 	readonly buildArgs: (prompt: string) => ReadonlyArray<string>;
+	/**
+	 * Optional per-harness parser. Receives each raw stdout line and the current
+	 * parser state. Returns derived `HarnessEvent`s (e.g. `tool_use`, `tool_result`,
+	 * `usage`) and the updated state.
+	 *
+	 * Raw `stdout`/`stderr` events are always emitted regardless of this parser;
+	 * the parser only *adds* structured events on top of them.
+	 * Omit (or return `[]`) to keep raw-text-only behaviour.
+	 */
+	readonly parseLine?: ParseLine;
 }
 
 export const createSubprocessHarness = <Name extends string>(
 	config: SubprocessHarnessConfig<Name>,
 ): Harness<Name> => {
 	const harnessName = HarnessName.make(config.name);
+	const parse = config.parseLine ?? identityParser;
 
 	const buildCommand = (opts: ExecOpts): Command.Command => {
 		const base = Command.make(config.bin, ...config.buildArgs(opts.prompt));
@@ -30,14 +56,24 @@ export const createSubprocessHarness = <Name extends string>(
 
 	const lineEvents = (
 		bytes: Stream.Stream<Uint8Array, unknown>,
-		type: 'stdout' | 'stderr',
-	): Stream.Stream<HarnessEvent, HarnessSpawnError> =>
-		bytes.pipe(
+		streamType: 'stdout' | 'stderr',
+	): Stream.Stream<HarnessEvent, HarnessSpawnError> => {
+		let parserState: ParserState = {};
+		return bytes.pipe(
 			Stream.decodeText('utf-8'),
 			Stream.splitLines,
-			Stream.map((line) => ({ type, line }) satisfies HarnessEvent),
+			Stream.flatMap((line) => {
+				const rawEvent: HarnessEvent = { type: streamType, line };
+				if (streamType === 'stdout') {
+					const result = parse(line, parserState);
+					parserState = result.state;
+					return Stream.fromIterable([rawEvent, ...result.events]);
+				}
+				return Stream.make(rawEvent);
+			}),
 			Stream.mapError(toSpawnError),
 		);
+	};
 
 	const stream = (
 		opts: ExecOpts,

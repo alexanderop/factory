@@ -7,11 +7,15 @@ export interface ScriptedResponse {
 	readonly stdout?: string;
 	readonly stderr?: string;
 	readonly exitCode?: number;
+	readonly events?: ReadonlyArray<HarnessEvent>;
 }
 
 /**
  * Test double for `Harness`. Cycles through `responses` on each `exec`/`stream`
  * call. Use via `harnessRegistryLayer([scriptedHarness('claude-code', [...])])`.
+ *
+ * Supports synthetic `tool_use`/`tool_result` events via the `events` field —
+ * these are emitted after stdout/stderr lines (before the exit event).
  */
 export const scriptedHarness = <Name extends string>(
 	name: Name,
@@ -57,6 +61,11 @@ export const scriptedHarness = <Name extends string>(
 			if (r.stderr) {
 				for (const line of r.stderr.split('\n')) {
 					if (line) events.push({ type: 'stderr', line });
+				}
+			}
+			if (r.events) {
+				for (const event of r.events) {
+					events.push(event);
 				}
 			}
 			events.push({ type: 'exit', code: r.exitCode ?? 0 });

@@ -5,6 +5,7 @@ import { NoOtelLayer, OtelLayer } from './otel.ts';
 import { ConsoleDisplay } from './services/Display.ts';
 import { callbackEventEmitter } from './services/EventEmitter.ts';
 import { harnessRegistryLayer } from './services/HarnessRegistry.ts';
+import { LiveHarnessTelemetry, NoOpHarnessTelemetry } from './services/HarnessTelemetry.ts';
 import { FileStepLoader } from './services/StepLoader.ts';
 import { DefaultUntilEvaluator } from './services/UntilEvaluator.ts';
 import type {
@@ -28,6 +29,7 @@ const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RunOptions) => {
 		harnessRegistryLayer(opts.harnesses ?? []),
 		FileStepLoader.layer,
 		DefaultUntilEvaluator.layer,
+		otelEnabled ? LiveHarnessTelemetry.layer : NoOpHarnessTelemetry.layer,
 		otelEnabled ? OtelLayer : NoOtelLayer,
 	).pipe(Layer.provideMerge(NodeContext.layer));
 };

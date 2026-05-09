@@ -9,12 +9,15 @@ import {
 	type FactoryError,
 } from './errors.ts';
 import { HarnessName, PipelineName, RunId, StepId } from './ids.ts';
+import * as FactoryMetrics from './metrics.ts';
 import { Display } from './services/Display.ts';
 import { EventEmitter } from './services/EventEmitter.ts';
 import { HarnessRegistry } from './services/HarnessRegistry.ts';
+import { HarnessTelemetry } from './services/HarnessTelemetry.ts';
 import { StepLoader } from './services/StepLoader.ts';
 import { UntilEvaluator } from './services/UntilEvaluator.ts';
 import type {
+	CaptureMode,
 	ExecResult,
 	FactoryOptions,
 	Harness,
@@ -33,6 +36,7 @@ interface RunStepArgs {
 	readonly cwd: string;
 	readonly prd: string;
 	readonly idleTimeoutMs?: number;
+	readonly captureMode: CaptureMode;
 }
 
 const resolvePrdContent = (prd: string, cwd: string) =>
@@ -67,13 +71,14 @@ const runStep = (
 ): Effect.Effect<
 	void,
 	FactoryError,
-	Display | EventEmitter | UntilEvaluator | CommandExecutor.CommandExecutor
+	Display | EventEmitter | UntilEvaluator | HarnessTelemetry | CommandExecutor.CommandExecutor
 > =>
 	Effect.gen(function* () {
 		const display = yield* Display;
 		const emitter = yield* EventEmitter;
 		const evaluator = yield* UntilEvaluator;
-		const { runId, stepId, loaded, harness, options, cwd, prd, idleTimeoutMs } = args;
+		const telemetry = yield* HarnessTelemetry;
+		const { runId, stepId, loaded, harness, options, cwd, prd, idleTimeoutMs, captureMode } = args;
 
 		const maxIters = options.maxIters ?? loaded.frontmatter.maxIters ?? 1;
 		const until = options.until ?? loaded.frontmatter.until;
@@ -83,34 +88,71 @@ const runStep = (
 
 		const fullPrompt = prd ? `# PRD\n\n${prd}\n\n# Step\n\n${loaded.prompt}` : loaded.prompt;
 
+		const stepStartMs = Date.now();
 		let success = false;
 		let lastResult: ExecResult = { exitCode: 0, stdout: '', stderr: '' };
+
 		for (let i = 1; i <= maxIters; i++) {
 			yield* emitter.emit({ type: 'step.iter', runId, step: stepId, iter: i });
 			yield* display.stepIter(stepId, i, maxIters);
 
-			lastResult = yield* harness.exec({ prompt: fullPrompt, cwd, idleTimeoutMs }).pipe(
-				Effect.mapError((e) =>
-					e._tag === 'StepIdleTimeoutError'
-						? new StepIdleTimeoutError({
-								message: e.message,
-								step: stepId,
-								timeoutMs: e.timeoutMs,
-							})
-						: e,
-				),
+			lastResult = yield* Effect.gen(function* () {
+				const result = yield* telemetry
+					.processStream(
+						harness.stream({ prompt: fullPrompt, cwd, idleTimeoutMs }),
+						HarnessName.make(harness.name),
+						captureMode,
+					)
+					.pipe(
+						Effect.mapError((e) =>
+							e._tag === 'StepIdleTimeoutError'
+								? new StepIdleTimeoutError({
+										message: e.message,
+										step: stepId,
+										timeoutMs: e.timeoutMs,
+									})
+								: e,
+						),
+					);
+				return result;
+			}).pipe(
+				Effect.withSpan('factory.harness.exec', {
+					attributes: {
+						'factory.harness': harness.name,
+						'factory.harness.bin': harness.name,
+						'factory.step': stepId,
+					},
+				}),
 			);
 
 			if (until === undefined) {
 				success = true;
 				break;
 			}
-			const passed = yield* evaluator.evaluate(until, { step: stepId, cwd, lastResult });
+
+			const passed = yield* Effect.gen(function* () {
+				return yield* evaluator.evaluate(until, { step: stepId, cwd, lastResult });
+			}).pipe(
+				Effect.withSpan('factory.until.eval', {
+					attributes: {
+						'factory.until': until,
+						'factory.step': stepId,
+					},
+				}),
+			);
+
 			if (passed) {
 				success = true;
 				break;
 			}
 		}
+
+		const stepDurationMs = Date.now() - stepStartMs;
+		FactoryMetrics.stepDuration.record(stepDurationMs, {
+			step: stepId,
+			harness: harness.name,
+			ok: String(success),
+		});
 
 		yield* emitter.emit({ type: 'step.end', runId, step: stepId, ok: success });
 		yield* display.stepEnd(stepId, success);
@@ -146,6 +188,7 @@ export const runFactoryEffect = (
 	| HarnessRegistry
 	| StepLoader
 	| UntilEvaluator
+	| HarnessTelemetry
 	| FileSystem.FileSystem
 	| Path.Path
 	| CommandExecutor.CommandExecutor
@@ -159,6 +202,7 @@ export const runFactoryEffect = (
 		const runId = RunId.make(randomUUID());
 		const pipeline = PipelineName.make(factoryOpts.name);
 		const cwd = runOpts.cwd ?? process.cwd();
+		const captureMode = runOpts.captureMode ?? 'redacted';
 
 		yield* display.runStart(pipeline, runId);
 		yield* emitter.emit({ type: 'run.start', runId, pipeline });
@@ -191,6 +235,7 @@ export const runFactoryEffect = (
 					cwd,
 					prd,
 					idleTimeoutMs: runOpts.idleTimeoutMs,
+					captureMode,
 				});
 			}
 		});

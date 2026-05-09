@@ -25,7 +25,23 @@ export interface ExecResult {
 export type HarnessEvent =
 	| { readonly type: 'stdout'; readonly line: string }
 	| { readonly type: 'stderr'; readonly line: string }
-	| { readonly type: 'tool'; readonly name: string; readonly input?: unknown }
+	| { readonly type: 'tool_use'; readonly id: string; readonly name: string; readonly input: unknown }
+	| {
+			readonly type: 'tool_result';
+			readonly id: string;
+			readonly ok: boolean;
+			readonly output?: unknown;
+			readonly error?: string;
+	  }
+	| {
+			readonly type: 'usage';
+			readonly model?: string;
+			readonly inputTokens?: number;
+			readonly outputTokens?: number;
+			readonly cacheReadTokens?: number;
+			readonly cacheCreationTokens?: number;
+	  }
+	| { readonly type: 'message'; readonly role: 'assistant' | 'user' | 'system'; readonly text: string }
 	| { readonly type: 'exit'; readonly code: number };
 
 export type HarnessExecRequirements = CommandExecutor.CommandExecutor;
@@ -106,6 +122,9 @@ export interface FactoryOptions<Names extends string = string> {
 	readonly harnesses?: ReadonlyArray<Harness<Names>>;
 }
 
+/** Controls how much of tool input/output is recorded on spans and logs. */
+export type CaptureMode = 'off' | 'counts' | 'redacted' | 'full';
+
 export interface RunOptions {
 	readonly prd: string;
 	readonly cwd?: string;
@@ -113,6 +132,7 @@ export interface RunOptions {
 	readonly onStep?: (event: FactoryEvent) => void;
 	readonly onError?: (event: Extract<FactoryEvent, { type: 'error' }>) => void;
 	readonly otel?: boolean;
+	readonly captureMode?: CaptureMode;
 }
 
 export interface StepEntry {

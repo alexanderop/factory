@@ -1,7 +1,7 @@
 import { Args, Command, Options } from '@effect/cli';
 import { Path } from '@effect/platform';
-import { Effect, Predicate } from 'effect';
-import { ConfigLoadError, type Factory } from '@factory/core';
+import { Effect, Option, Predicate } from 'effect';
+import { ConfigLoadError, type CaptureMode, type Factory } from '@factory/core';
 
 const VERSION = '0.0.0';
 
@@ -22,6 +22,14 @@ const cwdOption = Options.directory('cwd').pipe(
 
 const noOtelOption = Options.boolean('no-otel').pipe(
 	Options.withDescription('Disable OpenTelemetry export'),
+);
+
+const otelCaptureOption = Options.choice('otel-capture', ['off', 'counts', 'redacted', 'full'] as const).pipe(
+	Options.withDescription(
+		'How much of tool input/output to record on spans (default: redacted). ' +
+		'Env: FACTORY_OTEL_CAPTURE',
+	),
+	Options.optional,
 );
 
 const idleTimeoutOption = Options.integer('idle-timeout').pipe(
@@ -108,6 +116,13 @@ const loadFactoryConfig = (
 		);
 	});
 
+const resolveCaptureMode = (flag: Option.Option<CaptureMode>): CaptureMode => {
+	if (Option.isSome(flag)) return flag.value;
+	const env = process.env.FACTORY_OTEL_CAPTURE;
+	if (env === 'off' || env === 'counts' || env === 'redacted' || env === 'full') return env;
+	return 'redacted';
+};
+
 const runCommand = Command.make(
 	'run',
 	{
@@ -115,9 +130,10 @@ const runCommand = Command.make(
 		prd: prdOption,
 		cwd: cwdOption,
 		noOtel: noOtelOption,
+		otelCapture: otelCaptureOption,
 		idleTimeout: idleTimeoutOption,
 	},
-	({ name, prd, cwd: cwdOpt, noOtel, idleTimeout }) =>
+	({ name, prd, cwd: cwdOpt, noOtel, otelCapture, idleTimeout }) =>
 		Effect.gen(function* () {
 			const path = yield* Path.Path;
 			const cwd = cwdOpt._tag === 'Some' ? cwdOpt.value : path.resolve(process.cwd());
@@ -129,6 +145,7 @@ const runCommand = Command.make(
 				cwd,
 				idleTimeoutMs,
 				otel: !noOtel,
+				captureMode: resolveCaptureMode(otelCapture),
 			});
 		}),
 );

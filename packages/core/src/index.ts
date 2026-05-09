@@ -15,6 +15,7 @@ export { factory } from './factory.ts';
 export { formatErrorMessage, withFriendlyErrors } from './error-handler.ts';
 export { runFactoryEffect } from './orchestrator.ts';
 export { NoOtelLayer, OtelLayer } from './otel.ts';
+export { redact } from './redact.ts';
 export {
 	ConsoleDisplay,
 	Display,
@@ -35,6 +36,12 @@ export {
 	type HarnessRegistryService,
 } from './services/HarnessRegistry.ts';
 export {
+	HarnessTelemetry,
+	type HarnessTelemetryService,
+	LiveHarnessTelemetry,
+	NoOpHarnessTelemetry,
+} from './services/HarnessTelemetry.ts';
+export {
 	FileStepLoader,
 	InMemoryStepLoader,
 	StepLoader,
@@ -47,8 +54,14 @@ export {
 	UntilEvaluator,
 	type UntilEvaluatorService,
 } from './services/UntilEvaluator.ts';
-export { createSubprocessHarness, type SubprocessHarnessConfig } from './subprocess.ts';
+export {
+	createSubprocessHarness,
+	type ParseLine,
+	type ParserState,
+	type SubprocessHarnessConfig,
+} from './subprocess.ts';
 export type {
+	CaptureMode,
 	ExecOpts,
 	ExecResult,
 	Factory,

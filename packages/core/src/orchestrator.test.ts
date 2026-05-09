@@ -6,6 +6,7 @@ import {
 	type DisplayEntry,
 	harnessRegistryLayer,
 	InMemoryStepLoader,
+	NoOpHarnessTelemetry,
 	recordingEventEmitter,
 	scriptedHarness,
 	scriptedUntilEvaluator,
@@ -40,6 +41,7 @@ const buildLayer = (
 		]),
 		InMemoryStepLoader.layer(new Map(steps)),
 		scriptedUntilEvaluator.layer(verdicts),
+		NoOpHarnessTelemetry.layer,
 	).pipe(Layer.provideMerge(NodeContext.layer));
 
 describe('runFactoryEffect', () => {
