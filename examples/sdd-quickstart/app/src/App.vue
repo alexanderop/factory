@@ -1,11 +1,32 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import {
+	applyInitialColorMode,
+	COLOR_MODE_STORAGE_KEY,
+	toggleColorMode,
+} from './colorMode';
+
+applyInitialColorMode({
+	prefersDark: () =>
+		typeof window.matchMedia === 'function' &&
+		window.matchMedia('(prefers-color-scheme: dark)').matches,
+	getStored: () => {
+		const value = localStorage.getItem(COLOR_MODE_STORAGE_KEY);
+		return value === 'dark' || value === 'light' ? value : null;
+	},
+});
 
 type Todo = {
 	id: number;
 	text: string;
 	done: boolean;
 };
+
+function onToggleTheme() {
+	toggleColorMode({
+		setStored: (mode) => localStorage.setItem(COLOR_MODE_STORAGE_KEY, mode),
+	});
+}
 
 const todos = ref<Todo[]>([
 	{ id: 1, text: 'Try Nuxt UI', done: true },
@@ -48,13 +69,23 @@ function clearCompleted() {
 
 <template>
 	<UApp>
-		<main class="min-h-screen bg-neutral-50 py-12 px-4">
+		<main class="min-h-screen bg-muted py-12 px-4">
 			<div class="mx-auto max-w-xl">
-				<header class="mb-6">
-					<h1 class="text-3xl font-semibold text-neutral-900">To-do</h1>
-					<p class="text-neutral-500 mt-1">
-						{{ remaining }} {{ remaining === 1 ? 'task' : 'tasks' }} left
-					</p>
+				<header class="mb-6 flex items-start justify-between gap-3">
+					<div>
+						<h1 class="text-3xl font-semibold text-highlighted">To-do</h1>
+						<p class="text-muted mt-1">
+							{{ remaining }} {{ remaining === 1 ? 'task' : 'tasks' }} left
+						</p>
+					</div>
+					<UButton
+						icon="i-lucide-sun-moon"
+						variant="ghost"
+						color="neutral"
+						size="md"
+						aria-label="Toggle theme"
+						@click="onToggleTheme"
+					/>
 				</header>
 
 				<UCard>
@@ -82,12 +113,18 @@ function clearCompleted() {
 						</UButton>
 					</div>
 
-					<ul class="mt-4 divide-y divide-neutral-200">
-						<li v-for="todo in filtered" :key="todo.id" class="flex items-center gap-3 py-3">
+					<ul class="mt-4 divide-y divide-default">
+						<li
+							v-for="todo in filtered"
+							:key="todo.id"
+							class="flex items-center gap-3 py-3"
+							data-testid="todo-item"
+						>
 							<UCheckbox :model-value="todo.done" @update:model-value="toggle(todo)" />
 							<span
-								class="flex-1 text-neutral-900"
-								:class="{ 'line-through text-neutral-400': todo.done }"
+								class="flex-1 text-default"
+								:class="{ 'line-through text-dimmed': todo.done }"
+								data-testid="todo-text"
 							>
 								{{ todo.text }}
 							</span>
@@ -100,7 +137,7 @@ function clearCompleted() {
 								@click="remove(todo)"
 							/>
 						</li>
-						<li v-if="filtered.length === 0" class="py-8 text-center text-neutral-400">
+						<li v-if="filtered.length === 0" class="py-8 text-center text-dimmed">
 							Nothing here.
 						</li>
 					</ul>

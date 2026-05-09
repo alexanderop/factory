@@ -5,6 +5,18 @@
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>To-do</title>
+		<script>
+			(function () {
+				try {
+					var stored = localStorage.getItem('color-mode');
+					var prefersDark =
+						window.matchMedia &&
+						window.matchMedia('(prefers-color-scheme: dark)').matches;
+					var isDark = stored === 'dark' || stored === 'light' ? stored === 'dark' : prefersDark;
+					if (isDark) document.documentElement.classList.add('dark');
+				} catch (_) {}
+			})();
+		</script>
 	</head>
 	<body>
 		<div id="app"></div>
