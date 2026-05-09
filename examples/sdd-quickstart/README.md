@@ -19,18 +19,18 @@ The pipeline is defined in `.factory/factory.ts` and step prompts live under
 `.factory/steps/`. The pipeline runs from this directory, so `feature.md`
 points the agents at `./app` for the actual code changes.
 
-This example uses **all three harnesses** to show that pipelines are
-harness-agnostic — each step picks the tool best suited to it:
+This example runs every step on `claude-code` pinned to Opus 4.7
+(`claude --model claude-opus-4-7`):
 
 | step       | harness       | why                                             |
 | ---------- | ------------- | ----------------------------------------------- |
 | `plan`     | `claude-code` | strategic decomposition into vertical slices    |
-| `ralph`    | `codex`       | tight implement → run-tests → fix loop          |
+| `ralph`    | `claude-code` | tight implement → run-tests → fix loop          |
 | `verify`   | `claude-code` | strict diff-vs-PRD review                       |
-| `qa`       | `copilot`     | run typecheck/test/lint and fix small breakages |
-| `simplify` | `codex`       | remove smells without changing behaviour        |
+| `qa`       | `claude-code` | run typecheck/test/lint and fix small breakages |
+| `simplify` | `claude-code` | remove smells without changing behaviour        |
 
-You'll need each harness CLI installed locally (`claude`, `codex`, `copilot`).
+You'll need the `claude` CLI installed locally.
 
 ## Run the to-do app
 

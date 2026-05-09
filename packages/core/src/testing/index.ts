@@ -10,6 +10,14 @@ export { InMemoryStepLoader } from '../services/StepLoader.ts';
 export { scriptedUntilEvaluator } from '../services/UntilEvaluator.ts';
 export { assertHelpSnapshot, type HelpSnapshotArgs } from './helpSnapshot.ts';
 export {
+	getFinishedSpans,
+	getSpanNames,
+	OtelTest,
+	OtelTestLayer,
+	type OtelTestService,
+	resetSpans,
+} from './OtelTest.ts';
+export {
 	type ScriptedHarnessOptions,
 	type ScriptedResponse,
 	scriptedHarness,

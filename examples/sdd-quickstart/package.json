@@ -8,9 +8,7 @@
 	},
 	"dependencies": {
 		"@factory/core": "workspace:*",
-		"@factory/harness-claude-code": "workspace:*",
-		"@factory/harness-codex": "workspace:*",
-		"@factory/harness-copilot": "workspace:*"
+		"@factory/harness-claude-code": "workspace:*"
 	},
 	"devDependencies": {
 		"tsx": "^4.19.2",

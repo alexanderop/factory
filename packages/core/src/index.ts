@@ -25,6 +25,7 @@ export {
 } from './errors.ts';
 export { factory } from './factory.ts';
 export { formatErrorMessage, withFriendlyErrors } from './error-handler.ts';
+export { recordTaggedError } from './observability.ts';
 export { runFactoryEffect } from './orchestrator.ts';
 export { NoOtelLayer, OtelLayer } from './otel.ts';
 export {
@@ -83,6 +84,7 @@ export type {
 	Harness,
 	HarnessEvent,
 	HarnessExecRequirements,
+	HarnessTokenUsage,
 	LoadedStep,
 	RunOptions,
 	RunState,

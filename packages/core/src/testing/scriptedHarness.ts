@@ -8,6 +8,12 @@ export interface ScriptedResponse {
 	readonly stdout?: string;
 	readonly stderr?: string;
 	readonly exitCode?: number;
+	/**
+	 * When provided, the harness emits these events in order (followed by an
+	 * implicit `exit`). Used for testing tool-call telemetry without parsing
+	 * stream-json.
+	 */
+	readonly events?: ReadonlyArray<HarnessEvent>;
 }
 
 export interface ScriptedHarnessOptions {
@@ -74,14 +80,18 @@ export const scriptedHarness = <Name extends string>(
 			options.onCall?.(opts);
 			const r = next();
 			const events: HarnessEvent[] = [];
-			if (r.stdout) {
-				for (const line of r.stdout.split('\n')) {
-					if (line) events.push({ type: 'stdout', line });
+			if (r.events) {
+				events.push(...r.events);
+			} else {
+				if (r.stdout) {
+					for (const line of r.stdout.split('\n')) {
+						if (line) events.push({ type: 'stdout', line });
+					}
 				}
-			}
-			if (r.stderr) {
-				for (const line of r.stderr.split('\n')) {
-					if (line) events.push({ type: 'stderr', line });
+				if (r.stderr) {
+					for (const line of r.stderr.split('\n')) {
+						if (line) events.push({ type: 'stderr', line });
+					}
 				}
 			}
 			events.push({ type: 'exit', code: r.exitCode ?? 0 });

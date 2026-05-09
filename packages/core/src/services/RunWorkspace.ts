@@ -49,6 +49,7 @@ export interface IterPaths {
 	readonly stdoutPath: string;
 	readonly stderrPath: string;
 	readonly promptPath: string;
+	readonly eventsPath: string;
 }
 
 export interface IterEndArgs {
@@ -80,6 +81,11 @@ export interface RunWorkspaceService {
 		stepOrd: number,
 		n: number,
 		text: string,
+	) => Effect.Effect<void, RunRecordingError>;
+	readonly appendIterEvent: (
+		stepOrd: number,
+		n: number,
+		event: FactoryEvent,
 	) => Effect.Effect<void, RunRecordingError>;
 }
 
@@ -215,6 +221,7 @@ const makeService = ({
 					stdoutPath: path.join(iterDir, 'stdout.log'),
 					stderrPath: path.join(iterDir, 'stderr.log'),
 					promptPath: path.join(iterDir, 'prompt.md'),
+					eventsPath: path.join(iterDir, 'events.jsonl'),
 				};
 				iterPathsByKey.set(iterKey(args.stepOrd, args.n), paths);
 				yield* writeFile(paths.promptPath, args.prompt);
@@ -242,6 +249,20 @@ const makeService = ({
 		appendStdout: (stepOrd, n, text) => appendLog('stdout', stepOrd, n, text),
 
 		appendStderr: (stepOrd, n, text) => appendLog('stderr', stepOrd, n, text),
+
+		appendIterEvent: (stepOrd, n, event) => {
+			const paths = iterPathsByKey.get(iterKey(stepOrd, n));
+			if (!paths) {
+				return Effect.fail(
+					new RunRecordingError({
+						message: `cannot append iter event: iter ${stepOrd}/${n} not started`,
+					}),
+				);
+			}
+			return fs
+				.writeFileString(paths.eventsPath, `${JSON.stringify(event)}\n`, { flag: 'a' })
+				.pipe(Effect.mapError(toRecordingError(`failed to append iter event`, paths.eventsPath)));
+		},
 	};
 };
 

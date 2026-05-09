@@ -1,5 +1,6 @@
 import { Command, type CommandExecutor } from '@effect/platform';
-import { Duration, Effect, Stream } from 'effect';
+import { Duration, Effect, Metric, Stream } from 'effect';
+import { harnessSpawnsTotal } from './metrics.ts';
 import type { HarnessCapabilities } from './capabilities.ts';
 import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
@@ -13,6 +14,18 @@ export interface SubprocessHarnessConfig<Name extends string, P extends Permissi
 	};
 	readonly buildArgs: (prompt: string, ctx: { readonly permissions: P }) => ReadonlyArray<string>;
 	readonly defaultPermissions?: P;
+	/**
+	 * Optional parser converting a single stdout line into one or more
+	 * `HarnessEvent`s. When present, stdout is parsed instead of emitted as
+	 * raw `{ type: 'stdout', line }`. Stderr is always emitted as raw lines.
+	 */
+	readonly parseStdoutLine?: (line: string) => ReadonlyArray<HarnessEvent>;
+	/**
+	 * Extra env injected into the subprocess only when OTel passthrough is
+	 * active. Use for harness-specific opt-in flags (e.g.
+	 * `CLAUDE_CODE_ENABLE_TELEMETRY=1`).
+	 */
+	readonly telemetryEnv?: Readonly<Record<string, string>>;
 }
 
 export const createSubprocessHarness = <Name extends string, const P extends PermissionMode>(
@@ -44,14 +57,24 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 			bin: config.bin,
 		});
 
-	const lineEvents = (
+	const stdoutEvents = (
 		bytes: Stream.Stream<Uint8Array, unknown>,
-		type: 'stdout' | 'stderr',
+	): Stream.Stream<HarnessEvent, HarnessSpawnError> => {
+		const lines = bytes.pipe(Stream.decodeText('utf-8'), Stream.splitLines);
+		const parser = config.parseStdoutLine;
+		const events = parser
+			? lines.pipe(Stream.flatMap((line) => Stream.fromIterable(parser(line))))
+			: lines.pipe(Stream.map((line) => ({ type: 'stdout', line }) satisfies HarnessEvent));
+		return events.pipe(Stream.mapError(toSpawnError));
+	};
+
+	const stderrEvents = (
+		bytes: Stream.Stream<Uint8Array, unknown>,
 	): Stream.Stream<HarnessEvent, HarnessSpawnError> =>
 		bytes.pipe(
 			Stream.decodeText('utf-8'),
 			Stream.splitLines,
-			Stream.map((line) => ({ type, line }) satisfies HarnessEvent),
+			Stream.map((line) => ({ type: 'stderr', line }) satisfies HarnessEvent),
 			Stream.mapError(toSpawnError),
 		);
 
@@ -65,7 +88,30 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		const events: Stream.Stream<HarnessEvent, HarnessSpawnError, CommandExecutor.CommandExecutor> =
 			Stream.unwrapScoped(
 				Effect.gen(function* () {
-					const proc = yield* Command.start(buildCommand(opts)).pipe(Effect.mapError(toSpawnError));
+					const proc = yield* Command.start(buildCommand(opts)).pipe(
+						Effect.mapError(toSpawnError),
+						Effect.tap(() =>
+							Metric.increment(harnessSpawnsTotal).pipe(
+								Effect.tagMetrics('harness', config.name),
+								Effect.tagMetrics('outcome', 'ok'),
+							),
+						),
+						Effect.tapError(() =>
+							Metric.increment(harnessSpawnsTotal).pipe(
+								Effect.tagMetrics('harness', config.name),
+								Effect.tagMetrics('outcome', 'error'),
+							),
+						),
+						Effect.withSpan('factory.harness.spawn', {
+							kind: 'producer',
+							attributes: {
+								'factory.harness': config.name,
+								'factory.harness.bin': config.bin,
+								'factory.permission.mode': opts.permissions,
+								'factory.cwd': opts.cwd ?? '',
+							},
+						}),
+					);
 					const exit: Stream.Stream<HarnessEvent, HarnessSpawnError> = Stream.fromEffect(
 						proc.exitCode.pipe(
 							Effect.map((code) => ({ type: 'exit', code }) satisfies HarnessEvent),
@@ -73,27 +119,35 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 						),
 					);
 					return Stream.concat(
-						Stream.merge(lineEvents(proc.stdout, 'stdout'), lineEvents(proc.stderr, 'stderr')),
+						Stream.merge(stdoutEvents(proc.stdout), stderrEvents(proc.stderr)),
 						exit,
 					);
 				}),
 			);
 
-		if (opts.idleTimeoutMs && opts.idleTimeoutMs > 0) {
-			const ms = opts.idleTimeoutMs;
-			return events.pipe(
-				Stream.timeoutFail(
-					() =>
-						new StepIdleTimeoutError({
-							message: `harness '${config.name}' produced no output for ${ms}ms`,
-							step: StepId.make(''),
-							timeoutMs: ms,
-						}),
-					Duration.millis(ms),
-				),
-			);
-		}
-		return events;
+		const withTimeout =
+			opts.idleTimeoutMs && opts.idleTimeoutMs > 0
+				? events.pipe(
+						Stream.timeoutFail(
+							() =>
+								new StepIdleTimeoutError({
+									message: `harness '${config.name}' produced no output for ${opts.idleTimeoutMs}ms`,
+									step: StepId.make(''),
+									timeoutMs: opts.idleTimeoutMs ?? 0,
+								}),
+							Duration.millis(opts.idleTimeoutMs),
+						),
+					)
+				: events;
+
+		return withTimeout.pipe(
+			Stream.withSpan('factory.harness.stream', {
+				attributes: {
+					'factory.harness': config.name,
+					'factory.permission.mode': opts.permissions,
+				},
+			}),
+		);
 	};
 
 	const exec = (
@@ -137,6 +191,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		name: config.name,
 		capabilities: config.capabilities,
 		defaultPermissions: config.defaultPermissions,
+		telemetryEnv: config.telemetryEnv,
 		exec,
 		stream,
 	};
