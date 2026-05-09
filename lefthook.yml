@@ -4,14 +4,14 @@ pre-commit:
   parallel: true
   jobs:
     - name: lint
-      glob: "*.{js,ts,mjs,cjs}"
+      glob: '*.{js,ts,mjs,cjs}'
       exclude:
         - repos/**/*
       run: pnpm exec oxlint --type-aware --fix {staged_files}
       stage_fixed: true
 
     - name: format
-      glob: "*.{js,ts,mjs,cjs,json,jsonc,md}"
+      glob: '*.{js,ts,mjs,cjs,json,jsonc,md}'
       exclude:
         - repos/**/*
         - pnpm-lock.yaml

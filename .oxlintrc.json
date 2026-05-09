@@ -73,6 +73,7 @@
     "**/dist/**",
     "**/*.tsbuildinfo",
     ".factory/runs/**",
+    "apps/**",
     "repos/**"
   ],
   "overrides": [
