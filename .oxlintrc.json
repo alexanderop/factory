@@ -1,0 +1,73 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"plugins": ["typescript", "unicorn", "import", "oxc", "promise", "node"],
+	"categories": {
+		"correctness": "error",
+		"suspicious": "warn",
+		"perf": "warn",
+		"style": "off"
+	},
+	"rules": {
+		"no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+		"no-console": "warn",
+		"no-debugger": "error",
+		"no-var": "error",
+		"prefer-const": "warn",
+		"eqeqeq": ["error", "always", { "null": "ignore" }],
+		"no-throw-literal": "error",
+		"no-implicit-coercion": "warn",
+
+		"typescript/no-explicit-any": "warn",
+		"typescript/no-non-null-assertion": "warn",
+		"typescript/consistent-type-imports": ["warn", { "prefer": "type-imports", "fixStyle": "separate-type-imports" }],
+		"typescript/no-import-type-side-effects": "warn",
+		"typescript/no-empty-object-type": "warn",
+		"typescript/no-unsafe-function-type": "warn",
+		"typescript/no-wrapper-object-types": "warn",
+		"typescript/ban-ts-comment": ["warn", { "ts-expect-error": "allow-with-description" }],
+
+		"import/no-cycle": ["error", { "maxDepth": 5 }],
+		"import/no-duplicates": "warn",
+		"import/no-self-import": "error",
+		"import/no-empty-named-blocks": "warn",
+
+		"unicorn/prefer-node-protocol": "error",
+		"unicorn/prefer-top-level-await": "warn",
+		"unicorn/prefer-string-starts-ends-with": "warn",
+		"unicorn/prefer-includes": "warn",
+		"unicorn/prefer-array-flat-map": "warn",
+		"unicorn/prefer-optional-catch-binding": "warn",
+		"unicorn/no-useless-undefined": "warn",
+		"unicorn/throw-new-error": "error",
+		"unicorn/error-message": "error",
+
+		"promise/no-return-wrap": "warn",
+		"promise/param-names": "warn",
+		"promise/no-new-statics": "error",
+
+		"node/no-exports-assign": "error",
+		"node/no-new-require": "error"
+	},
+	"ignorePatterns": [
+		"**/node_modules/**",
+		"**/dist/**",
+		"**/*.tsbuildinfo",
+		".factory/runs/**"
+	],
+	"overrides": [
+		{
+			"files": ["packages/cli/src/**", "packages/core/src/**"],
+			"rules": {
+				"no-console": "off"
+			}
+		},
+		{
+			"files": ["**/*.test.ts", "**/*.spec.ts", "examples/**"],
+			"rules": {
+				"no-console": "off",
+				"typescript/no-explicit-any": "off",
+				"typescript/no-non-null-assertion": "off"
+			}
+		}
+	]
+}

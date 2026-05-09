@@ -1,0 +1,30 @@
+{
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"printWidth": 100,
+	"semi": true,
+	"singleQuote": true,
+	"tabWidth": 2,
+	"trailingComma": "all",
+	"useTabs": true,
+	"ignorePatterns": [
+		"**/node_modules/**",
+		"**/dist/**",
+		"**/*.tsbuildinfo",
+		"**/pnpm-lock.yaml",
+		".factory/runs/**"
+	],
+	"overrides": [
+		{
+			"files": [".*", "*.md", "*.toml", "*.yml", "*.yaml"],
+			"options": {
+				"useTabs": false
+			}
+		},
+		{
+			"files": ["**/*.jsonc"],
+			"options": {
+				"trailingComma": "none"
+			}
+		}
+	]
+}
