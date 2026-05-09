@@ -1,14 +1,11 @@
-import * as Reactivity from '@effect/experimental/Reactivity';
-import { FileSystem } from '@effect/platform';
+import { FileSystem, Path } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
-import * as SqliteClient from '@effect/sql-sqlite-node/SqliteClient';
-import { SqlClient } from '@effect/sql/SqlClient';
-import * as SqlSchema from '@effect/sql/SqlSchema';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Effect, Layer, Ref, Schema } from 'effect';
+import { Effect, Layer, Predicate, Ref, Schema } from 'effect';
 import { RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
+import { decodeRun, decodeStep, IterRecord } from './services/runManifest.ts';
 import { LiveRunWorkspace } from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
@@ -20,79 +17,34 @@ import {
 	SilentDisplay,
 } from './testing/index.ts';
 
-const RunRow = Schema.Struct({
-	id: Schema.String,
-	pipeline: Schema.String,
-	status: Schema.String,
-	default_harness: Schema.NullOr(Schema.String),
-	cwd: Schema.String,
-	prd_source: Schema.String,
-	started_at: Schema.Number,
-	ended_at: Schema.NullOr(Schema.Number),
-});
+const decodeIterRecord = Schema.decodeUnknown(IterRecord);
 
-const StepRow = Schema.Struct({
-	run_id: Schema.String,
-	ord: Schema.Number,
-	step_id: Schema.String,
-	source: Schema.String,
-	harness: Schema.String,
-	until_pred: Schema.NullOr(Schema.String),
-	max_iters: Schema.Number,
-	status: Schema.String,
-});
-
-const EventRow = Schema.Struct({
-	seq: Schema.Number,
-	type: Schema.String,
-	step_id: Schema.NullOr(Schema.String),
-	iter: Schema.NullOr(Schema.Number),
-});
-
-const IterRow = Schema.Struct({
-	run_id: Schema.String,
-	step_ord: Schema.Number,
-	n: Schema.Number,
-	started_at: Schema.Number,
-	ended_at: Schema.NullOr(Schema.Number),
-	exit_code: Schema.NullOr(Schema.Number),
-});
-
-const readDb = (dbPath: string) =>
+const listTreeRelative = (
+	root: string,
+): Effect.Effect<ReadonlyArray<string>, unknown, FileSystem.FileSystem | Path.Path> =>
 	Effect.gen(function* () {
-		const sql = yield* SqlClient;
-		const findRuns = SqlSchema.findAll({
-			Request: Schema.Void,
-			Result: RunRow,
-			execute: () => sql`SELECT * FROM run`,
-		});
-		const findSteps = SqlSchema.findAll({
-			Request: Schema.Void,
-			Result: StepRow,
-			execute: () => sql`SELECT * FROM step ORDER BY ord`,
-		});
-		const findEvents = SqlSchema.findAll({
-			Request: Schema.Void,
-			Result: EventRow,
-			execute: () => sql`SELECT seq, type, step_id, iter FROM event ORDER BY seq`,
-		});
-		const findIters = SqlSchema.findAll({
-			Request: Schema.Void,
-			Result: IterRow,
-			execute: () => sql`SELECT * FROM iter ORDER BY step_ord, n`,
-		});
-		const runs = yield* findRuns();
-		const steps = yield* findSteps();
-		const events = yield* findEvents();
-		const iters = yield* findIters();
-		return { runs, steps, events, iters };
-	}).pipe(
-		Effect.provide(SqliteClient.layer({ filename: dbPath, readonly: true })),
-		Effect.provide(Reactivity.layer),
-	);
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const out: string[] = [];
+		const walk = (dir: string): Effect.Effect<void, unknown> =>
+			Effect.gen(function* () {
+				const entries = yield* fs.readDirectory(dir);
+				for (const name of entries) {
+					const full = path.join(dir, name);
+					const stat = yield* fs.stat(full);
+					if (stat.type === 'Directory') {
+						yield* walk(full);
+					} else {
+						out.push(path.relative(root, full));
+					}
+				}
+			});
+		yield* walk(root);
+		return out.toSorted();
+	});
 
-describe('runWorkspace integration (Slice 1)', () => {
-	it.scoped('writes run/step/event rows + prd.md and step.md to disk', () =>
+describe('runWorkspace integration (file-only manifests)', () => {
+	it.scoped('writes the canonical run directory layout', () =>
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
 			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-run-' });
@@ -131,7 +83,6 @@ describe('runWorkspace integration (Slice 1)', () => {
 			).pipe(Effect.provide(layer));
 
 			const runDir = `${tmp}/.factory/runs/${runId}`;
-			const dbPath = `${runDir}/run.db`;
 
 			const prd = yield* fs.readFileString(`${runDir}/prd.md`);
 			strictEqual(prd, 'inline PRD text');
@@ -142,32 +93,62 @@ describe('runWorkspace integration (Slice 1)', () => {
 			const ralphStepMd = yield* fs.readFileString(`${runDir}/steps/01-ralph/step.md`);
 			strictEqual(ralphStepMd, ralphMd);
 
-			const { runs, steps, events, iters } = yield* readDb(dbPath);
+			const tree = yield* listTreeRelative(runDir);
+			// The scripted harness emits only stdout/stderr/exit, so per-iter
+			// events.jsonl is never created. It would appear once the harness
+			// streams a tool.* / assistant.message / result event.
+			deepStrictEqual(tree, [
+				'events.jsonl',
+				'prd.md',
+				'run.json',
+				'steps/00-plan/iters/001/prompt.md',
+				'steps/00-plan/iters/001/stdout.log',
+				'steps/00-plan/iters/001/summary.json',
+				'steps/00-plan/step.json',
+				'steps/00-plan/step.md',
+				'steps/01-ralph/iters/001/prompt.md',
+				'steps/01-ralph/iters/001/stdout.log',
+				'steps/01-ralph/iters/001/summary.json',
+				'steps/01-ralph/step.json',
+				'steps/01-ralph/step.md',
+			]);
 
-			strictEqual(runs.length, 1);
-			strictEqual(runs[0]?.id, runId);
-			strictEqual(runs[0]?.pipeline, 'sdd');
-			strictEqual(runs[0]?.status, 'ok');
-			strictEqual(runs[0]?.default_harness, 'claude-code');
-			strictEqual(runs[0]?.cwd, tmp);
-			strictEqual(runs[0]?.prd_source, 'inline PRD text');
-			assertTrue((runs[0]?.ended_at ?? 0) >= (runs[0]?.started_at ?? 0));
+			const run = yield* decodeRun(yield* fs.readFileString(`${runDir}/run.json`));
+			strictEqual(run.id, runId);
+			strictEqual(run.pipeline, 'sdd');
+			strictEqual(run.status, 'ok');
+			strictEqual(run.defaultHarness, 'claude-code');
+			strictEqual(run.cwd, tmp);
+			strictEqual(run.prdSource, 'inline PRD text');
+			assertTrue((run.endedAt ?? 0) >= run.startedAt);
 
-			strictEqual(steps.length, 2);
-			deepStrictEqual(
-				steps.map((s) => [s.ord, s.step_id, s.status]),
-				[
-					[0, 'plan', 'ok'],
-					[1, 'ralph', 'ok'],
-				],
+			const planStep = yield* decodeStep(
+				yield* fs.readFileString(`${runDir}/steps/00-plan/step.json`),
 			);
-			strictEqual(steps[0]?.harness, 'claude-code');
-			strictEqual(steps[0]?.max_iters, 1);
+			strictEqual(planStep.ord, 0);
+			strictEqual(planStep.stepId, 'plan');
+			strictEqual(planStep.status, 'ok');
+			strictEqual(planStep.harness, 'claude-code');
+			strictEqual(planStep.maxIters, 1);
+			strictEqual(planStep.iters.length, 1);
+			strictEqual(planStep.iters[0]?.exitCode, 0);
 
-			strictEqual(iters.length, 2);
-			assertTrue(iters.every((i) => i.exit_code === 0));
+			const ralphStep = yield* decodeStep(
+				yield* fs.readFileString(`${runDir}/steps/01-ralph/step.json`),
+			);
+			strictEqual(ralphStep.ord, 1);
+			strictEqual(ralphStep.status, 'ok');
 
-			const eventTypes = events.map((e) => e.type);
+			const eventLines = (yield* fs.readFileString(`${runDir}/events.jsonl`))
+				.split('\n')
+				.filter((l) => l.length > 0);
+			const eventTypes = eventLines.map((line) => {
+				const parsed: unknown = JSON.parse(line);
+				if (Predicate.isRecord(parsed) && typeof parsed.type === 'string') {
+					return parsed.type;
+				}
+				return '';
+			});
 			strictEqual(eventTypes[0], 'run.start');
 			assertTrue(eventTypes.includes('step.start'));
 			assertTrue(eventTypes.includes('step.end'));
@@ -212,7 +193,6 @@ describe('runWorkspace integration (Slice 1)', () => {
 			).pipe(Effect.provide(layer));
 
 			const runDir = `${tmp}/.factory/runs/${runId}`;
-			const dbPath = `${runDir}/run.db`;
 
 			const stdout1 = yield* fs.readFileString(`${runDir}/steps/00-ralph/iters/001/stdout.log`);
 			strictEqual(stdout1, fiveLines);
@@ -237,12 +217,21 @@ describe('runWorkspace integration (Slice 1)', () => {
 				['a', 'b', 'c', 'd', 'e', 'DONE'],
 			);
 
-			const { iters } = yield* readDb(dbPath);
-			strictEqual(iters.length, 2);
-			strictEqual(iters[0]?.n, 1);
-			assertTrue((iters[0]?.ended_at ?? 0) >= (iters[0]?.started_at ?? 0));
-			strictEqual(iters[1]?.n, 2);
-			strictEqual(iters[1]?.exit_code, 0);
+			const step = yield* decodeStep(
+				yield* fs.readFileString(`${runDir}/steps/00-ralph/step.json`),
+			);
+			strictEqual(step.iters.length, 2);
+			strictEqual(step.iters[0]?.n, 1);
+			assertTrue((step.iters[0]?.endedAt ?? 0) >= (step.iters[0]?.startedAt ?? 0));
+			strictEqual(step.iters[1]?.n, 2);
+			strictEqual(step.iters[1]?.exitCode, 0);
+
+			const summaryRaw: unknown = JSON.parse(
+				yield* fs.readFileString(`${runDir}/steps/00-ralph/iters/002/summary.json`),
+			);
+			const summary = yield* decodeIterRecord(summaryRaw);
+			strictEqual(summary.n, 2);
+			strictEqual(summary.untilPassed, true);
 		}).pipe(Effect.provide(NodeContext.layer)),
 	);
 });

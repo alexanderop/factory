@@ -32,6 +32,7 @@ import { describeForSpan, recordTaggedError, toolInputAttributes } from './obser
 import { Display, type DisplayService } from './services/Display.ts';
 import { EventEmitter, type EventEmitterService } from './services/EventEmitter.ts';
 import { HarnessRegistry } from './services/HarnessRegistry.ts';
+import { buildIterPrompt } from './services/iterPrompt.ts';
 import { RunWorkspace, type RunWorkspaceService } from './services/RunWorkspace.ts';
 import { StepLoader } from './services/StepLoader.ts';
 import { UntilEvaluator } from './services/UntilEvaluator.ts';
@@ -61,6 +62,11 @@ interface RunStepArgs {
 	readonly idleTimeoutMs?: number;
 	readonly permissions: PermissionMode;
 }
+
+const factoryHarnessEnv = (runDir: string, cwd: string): Record<string, string> => ({
+	FACTORY_RUN_DIR: runDir,
+	FACTORY_PROJECT_PLAN: `${cwd}/IMPLEMENTATION_PLAN.md`,
+});
 
 const resolvePermissions = (
 	cliMode: PermissionMode | undefined,
@@ -382,7 +388,13 @@ const runStep = (
 ): Effect.Effect<
 	void,
 	FactoryError,
-	Display | EventEmitter | UntilEvaluator | RunWorkspace | CommandExecutor.CommandExecutor
+	| Display
+	| EventEmitter
+	| UntilEvaluator
+	| RunWorkspace
+	| CommandExecutor.CommandExecutor
+	| FileSystem.FileSystem
+	| Path.Path
 > =>
 	Effect.gen(function* () {
 		const display = yield* Display;
@@ -420,12 +432,19 @@ const runStep = (
 		yield* emitAndRecord(emitter, workspace, { type: 'step.start', runId, step: stepId });
 		yield* display.stepStart(stepId);
 
-		const fullPrompt = prd ? `# PRD\n\n${prd}\n\n# Step\n\n${loaded.prompt}` : loaded.prompt;
+		const basePrompt = prd ? `# PRD\n\n${prd}\n\n# Step\n\n${loaded.prompt}` : loaded.prompt;
 
 		let success = false;
 		for (let i = 1; i <= maxIters; i++) {
 			const iterStartedAt = yield* Clock.currentTimeMillis;
 			const iterPassed = yield* Effect.gen(function* () {
+				const fullPrompt = yield* buildIterPrompt({
+					runDir: workspace.runDir,
+					stepOrd,
+					stepId,
+					previousIter: i - 1,
+					basePrompt,
+				});
 				yield* workspace.recordIterStart({ stepOrd, n: i, prompt: fullPrompt });
 				yield* emitAndRecord(emitter, workspace, {
 					type: 'step.iter',
@@ -439,7 +458,13 @@ const runStep = (
 					runId,
 					harness,
 					harnessName,
-					opts: { prompt: fullPrompt, cwd, idleTimeoutMs, permissions },
+					opts: {
+						prompt: fullPrompt,
+						cwd,
+						idleTimeoutMs,
+						permissions,
+						env: factoryHarnessEnv(workspace.runDir, cwd),
+					},
 					stepId,
 					stepOrd,
 					n: i,

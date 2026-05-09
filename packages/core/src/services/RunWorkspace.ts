@@ -1,12 +1,16 @@
-import * as Reactivity from '@effect/experimental/Reactivity';
 import { FileSystem, Path } from '@effect/platform';
-import * as SqliteClient from '@effect/sql-sqlite-node/SqliteClient';
-import type { SqlClient } from '@effect/sql/SqlClient';
-import { Context, Effect, Layer } from 'effect';
-import { installSchema } from '../db/schema.ts';
+import { Clock, Context, Effect, Layer } from 'effect';
 import { RunRecordingError } from '../errors.ts';
 import type { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
 import type { FactoryEvent } from '../types.ts';
+import {
+	type IterRecord,
+	type RunRecord,
+	type StepRecord,
+	writeIter as writeIterEffect,
+	writeRun as writeRunEffect,
+	writeStep as writeStepEffect,
+} from './runManifest.ts';
 
 export interface RunStartArgs {
 	readonly pipeline: PipelineName;
@@ -64,7 +68,6 @@ export interface IterEndArgs {
 export interface RunWorkspaceService {
 	readonly runId: RunId;
 	readonly runDir: string;
-	readonly dbPath: string;
 	readonly recordRunStart: (args: RunStartArgs) => Effect.Effect<void, RunRecordingError>;
 	readonly recordRunEnd: (args: RunEndArgs) => Effect.Effect<void, RunRecordingError>;
 	readonly recordStepStart: (args: StepStartArgs) => Effect.Effect<void, RunRecordingError>;
@@ -104,39 +107,70 @@ const toRecordingError =
 			path,
 		});
 
+const iterKey = (stepOrd: number, n: number): string => `${stepOrd}-${n}`;
+
+interface StepEntry {
+	readonly dir: string;
+	readonly path: string;
+	record: StepRecord;
+}
+
 interface MakeServiceArgs {
 	readonly runId: RunId;
 	readonly runDir: string;
-	readonly dbPath: string;
-	readonly sql: SqlClient;
 	readonly fs: FileSystem.FileSystem;
 	readonly path: Path.Path;
 }
 
-const iterKey = (stepOrd: number, n: number): string => `${stepOrd}-${n}`;
-
-const makeService = ({
-	runId,
-	runDir,
-	dbPath,
-	sql,
-	fs,
-	path,
-}: MakeServiceArgs): RunWorkspaceService => {
-	const stepDirsByOrd = new Map<number, string>();
+const makeService = ({ runId, runDir, fs, path }: MakeServiceArgs): RunWorkspaceService => {
+	const stepEntries = new Map<number, StepEntry>();
 	const iterPathsByKey = new Map<string, IterPaths>();
+	const runPath = path.join(runDir, 'run.json');
+	const eventsPath = path.join(runDir, 'events.jsonl');
+	let runRecord: RunRecord | undefined;
 
-	const writeFile = (filePath: string, content: string) =>
-		fs
-			.writeFileString(filePath, content)
-			.pipe(Effect.mapError(toRecordingError(`failed to write ${filePath}`, filePath)));
+	const provideFs = Effect.provideService(FileSystem.FileSystem, fs);
+	const writeRun = (p: string, value: RunRecord) => writeRunEffect(p, value).pipe(provideFs);
+	const writeStep = (p: string, value: StepRecord) => writeStepEffect(p, value).pipe(provideFs);
+	const writeIter = (p: string, value: IterRecord) => writeIterEffect(p, value).pipe(provideFs);
 
 	const ensureDir = (dir: string) =>
 		fs
 			.makeDirectory(dir, { recursive: true })
 			.pipe(Effect.mapError(toRecordingError(`failed to create ${dir}`, dir)));
 
-	const sqlError = (msg: string) => Effect.mapError(toRecordingError(msg, dbPath));
+	const writeFile = (filePath: string, content: string) =>
+		fs
+			.writeFileString(filePath, content)
+			.pipe(Effect.mapError(toRecordingError(`failed to write ${filePath}`, filePath)));
+
+	const appendLine = (filePath: string, line: string) =>
+		fs
+			.writeFileString(filePath, `${line}\n`, { flag: 'a' })
+			.pipe(Effect.mapError(toRecordingError(`failed to append ${filePath}`, filePath)));
+
+	const requireRun = (): Effect.Effect<RunRecord, RunRecordingError> =>
+		runRecord === undefined
+			? Effect.fail(
+					new RunRecordingError({
+						message: 'run not started; call recordRunStart first',
+						path: runPath,
+					}),
+				)
+			: Effect.succeed(runRecord);
+
+	const persistStep = (entry: StepEntry) => writeStep(entry.path, entry.record);
+
+	const requireStep = (ord: number, op: string): Effect.Effect<StepEntry, RunRecordingError> => {
+		const entry = stepEntries.get(ord);
+		return entry === undefined
+			? Effect.fail(
+					new RunRecordingError({
+						message: `cannot ${op}: step ${ord} not started`,
+					}),
+				)
+			: Effect.succeed(entry);
+	};
 
 	const appendLog = (kind: 'stdout' | 'stderr', stepOrd: number, n: number, text: string) => {
 		const paths = iterPathsByKey.get(iterKey(stepOrd, n));
@@ -156,65 +190,74 @@ const makeService = ({
 	return {
 		runId,
 		runDir,
-		dbPath,
 
 		recordRunStart: (args) =>
 			Effect.gen(function* () {
 				yield* writeFile(path.join(runDir, 'prd.md'), args.prdContent);
-				yield* sql`INSERT INTO run (id, pipeline, default_harness, cwd, prd_source, factory_file, started_at, status)
-                   VALUES (${runId}, ${args.pipeline}, ${args.defaultHarness ?? null}, ${args.cwd}, ${args.prdSource}, ${args.factoryFile ?? null}, ${Date.now()}, 'running')`.pipe(
-					sqlError('failed to insert run row'),
-				);
+				const startedAt = yield* Clock.currentTimeMillis;
+				const record: RunRecord = {
+					id: runId,
+					pipeline: args.pipeline,
+					...(args.defaultHarness === undefined ? {} : { defaultHarness: args.defaultHarness }),
+					cwd: args.cwd,
+					prdSource: args.prdSource,
+					...(args.factoryFile === undefined ? {} : { factoryFile: args.factoryFile }),
+					startedAt,
+					status: 'running',
+				};
+				runRecord = record;
+				yield* writeRun(runPath, record);
 			}),
 
 		recordRunEnd: (args) =>
-			sql`UPDATE run SET ended_at = ${Date.now()}, status = ${args.status}, error_tag = ${args.errorTag ?? null}, error_message = ${args.errorMessage ?? null} WHERE id = ${runId}`.pipe(
-				sqlError('failed to update run row'),
-			),
+			Effect.gen(function* () {
+				const current = yield* requireRun();
+				const endedAt = yield* Clock.currentTimeMillis;
+				const updated: RunRecord = {
+					...current,
+					endedAt,
+					status: args.status,
+					...(args.errorTag === undefined ? {} : { errorTag: args.errorTag }),
+					...(args.errorMessage === undefined ? {} : { errorMessage: args.errorMessage }),
+				};
+				runRecord = updated;
+				yield* writeRun(runPath, updated);
+			}),
 
 		recordStepStart: (args) =>
 			Effect.gen(function* () {
 				const dir = path.join(runDir, 'steps', `${pad(args.ord, 2)}-${args.stepId}`);
-				stepDirsByOrd.set(args.ord, dir);
 				yield* ensureDir(dir);
 				yield* writeFile(path.join(dir, 'step.md'), args.stepFileContent);
-				yield* writeFile(
-					path.join(dir, 'summary.json'),
-					`${JSON.stringify(
-						{
-							ord: args.ord,
-							stepId: args.stepId,
-							source: args.source,
-							harness: args.harness,
-							until: args.until ?? null,
-							maxIters: args.maxIters,
-						},
-						null,
-						2,
-					)}\n`,
-				);
-				yield* sql`INSERT INTO step (run_id, ord, step_id, source, harness, until_pred, max_iters, started_at, status)
-                   VALUES (${runId}, ${args.ord}, ${args.stepId}, ${args.source}, ${args.harness}, ${args.until ?? null}, ${args.maxIters}, ${Date.now()}, 'running')`.pipe(
-					sqlError('failed to insert step row'),
-				);
+				const startedAt = yield* Clock.currentTimeMillis;
+				const record: StepRecord = {
+					ord: args.ord,
+					stepId: args.stepId,
+					source: args.source,
+					harness: args.harness,
+					...(args.until === undefined ? {} : { until: args.until }),
+					maxIters: args.maxIters,
+					startedAt,
+					status: 'running',
+					iters: [],
+				};
+				const entry: StepEntry = { dir, path: path.join(dir, 'step.json'), record };
+				stepEntries.set(args.ord, entry);
+				yield* persistStep(entry);
 			}),
 
 		recordStepEnd: (args) =>
-			sql`UPDATE step SET ended_at = ${Date.now()}, status = ${args.status} WHERE run_id = ${runId} AND ord = ${args.ord}`.pipe(
-				sqlError('failed to update step row'),
-			),
+			Effect.gen(function* () {
+				const entry = yield* requireStep(args.ord, 'end step');
+				const endedAt = yield* Clock.currentTimeMillis;
+				entry.record = { ...entry.record, endedAt, status: args.status };
+				yield* persistStep(entry);
+			}),
 
 		recordIterStart: (args) =>
 			Effect.gen(function* () {
-				const stepDir = stepDirsByOrd.get(args.stepOrd);
-				if (!stepDir) {
-					return yield* Effect.fail(
-						new RunRecordingError({
-							message: `cannot start iter ${args.stepOrd}/${args.n}: step ${args.stepOrd} not started`,
-						}),
-					);
-				}
-				const iterDir = path.join(stepDir, 'iters', pad(args.n, 3));
+				const entry = yield* requireStep(args.stepOrd, `start iter ${args.stepOrd}/${args.n}`);
+				const iterDir = path.join(entry.dir, 'iters', pad(args.n, 3));
 				yield* ensureDir(iterDir);
 				const paths: IterPaths = {
 					iterDir,
@@ -225,26 +268,46 @@ const makeService = ({
 				};
 				iterPathsByKey.set(iterKey(args.stepOrd, args.n), paths);
 				yield* writeFile(paths.promptPath, args.prompt);
-				yield* sql`INSERT INTO iter (run_id, step_ord, n, started_at) VALUES (${runId}, ${args.stepOrd}, ${args.n}, ${Date.now()})`.pipe(
-					sqlError('failed to insert iter row'),
-				);
+				const startedAt = yield* Clock.currentTimeMillis;
+				const iter: IterRecord = { n: args.n, startedAt };
+				entry.record = { ...entry.record, iters: [...entry.record.iters, iter] };
+				yield* persistStep(entry);
 				return paths;
 			}),
 
-		recordIterEnd: (args) => {
-			const untilPassed = args.untilPassed === undefined ? null : args.untilPassed ? 1 : 0;
-			return sql`UPDATE iter SET ended_at = ${Date.now()}, exit_code = ${args.exitCode}, until_passed = ${untilPassed}, until_output = ${args.untilOutput ?? null}, files_changed = ${args.filesChanged ?? null} WHERE run_id = ${runId} AND step_ord = ${args.stepOrd} AND n = ${args.n}`.pipe(
-				sqlError('failed to update iter row'),
-			);
-		},
+		recordIterEnd: (args) =>
+			Effect.gen(function* () {
+				const entry = yield* requireStep(args.stepOrd, `end iter ${args.stepOrd}/${args.n}`);
+				const idx = entry.record.iters.findIndex((it) => it.n === args.n);
+				const existing = idx < 0 ? undefined : entry.record.iters[idx];
+				if (existing === undefined) {
+					return yield* Effect.fail(
+						new RunRecordingError({
+							message: `cannot end iter ${args.stepOrd}/${args.n}: iter not started`,
+						}),
+					);
+				}
+				const endedAt = yield* Clock.currentTimeMillis;
+				const updatedIter: IterRecord = {
+					...existing,
+					n: args.n,
+					endedAt,
+					exitCode: args.exitCode,
+					...(args.untilPassed === undefined ? {} : { untilPassed: args.untilPassed }),
+					...(args.untilOutput === undefined ? {} : { untilOutput: args.untilOutput }),
+					...(args.filesChanged === undefined ? {} : { filesChanged: args.filesChanged }),
+				};
+				const iters = entry.record.iters.map((it, i) => (i === idx ? updatedIter : it));
+				entry.record = { ...entry.record, iters };
+				yield* persistStep(entry);
 
-		appendEvent: (event) => {
-			const stepId = 'step' in event ? event.step : null;
-			const iter = 'iter' in event ? event.iter : null;
-			return sql`INSERT INTO event (run_id, ts, type, step_id, iter, payload) VALUES (${runId}, ${Date.now()}, ${event.type}, ${stepId}, ${iter}, ${JSON.stringify(event)})`.pipe(
-				sqlError('failed to insert event row'),
-			);
-		},
+				const iterPaths = iterPathsByKey.get(iterKey(args.stepOrd, args.n));
+				if (iterPaths) {
+					yield* writeIter(path.join(iterPaths.iterDir, 'summary.json'), updatedIter);
+				}
+			}),
+
+		appendEvent: (event) => appendLine(eventsPath, JSON.stringify(event)),
 
 		appendStdout: (stepOrd, n, text) => appendLog('stdout', stepOrd, n, text),
 
@@ -259,9 +322,7 @@ const makeService = ({
 					}),
 				);
 			}
-			return fs
-				.writeFileString(paths.eventsPath, `${JSON.stringify(event)}\n`, { flag: 'a' })
-				.pipe(Effect.mapError(toRecordingError(`failed to append iter event`, paths.eventsPath)));
+			return appendLine(paths.eventsPath, JSON.stringify(event));
 		},
 	};
 };
@@ -280,25 +341,14 @@ const updateLatestSymlink = (runsDir: string, runId: RunId, fs: FileSystem.FileS
 		.pipe(logRemoveFail, Effect.zipRight(fs.symlink(runId, link)), logSymlinkFail);
 };
 
-const buildWorkspace = (
-	runId: RunId,
-	runDir: string,
-	dbPath: string,
-	sqliteOpts: Parameters<typeof SqliteClient.make>[0],
-) =>
+const buildWorkspace = (runId: RunId, runDir: string) =>
 	Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem;
 		const path = yield* Path.Path;
 		yield* fs
 			.makeDirectory(runDir, { recursive: true })
 			.pipe(Effect.mapError(toRecordingError(`failed to create ${runDir}`, runDir)));
-		const sql = yield* SqliteClient.make(sqliteOpts).pipe(
-			Effect.mapError(toRecordingError(`failed to open SQLite at ${dbPath}`, dbPath)),
-		);
-		yield* installSchema(sql).pipe(
-			Effect.mapError(toRecordingError('failed to install schema', dbPath)),
-		);
-		return makeService({ runId, runDir, dbPath, sql, fs, path });
+		return makeService({ runId, runDir, fs, path });
 	});
 
 interface LiveLayerArgs {
@@ -317,12 +367,11 @@ export const LiveRunWorkspace = {
 				const path = yield* Path.Path;
 				const runsDir = path.join(args.cwd, '.factory', 'runs');
 				const runDir = path.join(runsDir, args.runId);
-				const dbPath = path.join(runDir, 'run.db');
-				const service = yield* buildWorkspace(args.runId, runDir, dbPath, { filename: dbPath });
+				const service = yield* buildWorkspace(args.runId, runDir);
 				yield* updateLatestSymlink(runsDir, args.runId, fs);
 				return service;
 			}),
-		).pipe(Layer.provide(Reactivity.layer)),
+		),
 };
 
 interface InMemoryLayerArgs {
@@ -330,7 +379,7 @@ interface InMemoryLayerArgs {
 	readonly runDir?: string;
 }
 
-/** `:memory:` SQLite + tmp `runDir`; runDir auto-allocated if omitted. */
+/** Tmp-dir-backed workspace; runDir auto-allocated and scoped if omitted. */
 export const InMemoryRunWorkspace = {
 	layer: (
 		args: InMemoryLayerArgs,
@@ -342,12 +391,9 @@ export const InMemoryRunWorkspace = {
 				const runDir =
 					args.runDir ??
 					(yield* fs
-						.makeTempDirectoryScoped()
+						.makeTempDirectoryScoped({ prefix: 'factory-ws-' })
 						.pipe(Effect.mapError(toRecordingError('failed to create tmp dir'))));
-				return yield* buildWorkspace(args.runId, runDir, ':memory:', {
-					filename: ':memory:',
-					disableWAL: true,
-				});
+				return yield* buildWorkspace(args.runId, runDir);
 			}),
-		).pipe(Layer.provide(Reactivity.layer)),
+		),
 };
