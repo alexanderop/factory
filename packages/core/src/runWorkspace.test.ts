@@ -6,7 +6,8 @@ import { FileSystem } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import * as SqliteClient from '@effect/sql-sqlite-node/SqliteClient';
 import { SqlClient } from '@effect/sql/SqlClient';
-import { Effect, Layer, Ref } from 'effect';
+import * as SqlSchema from '@effect/sql/SqlSchema';
+import { Effect, Layer, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
@@ -21,51 +22,71 @@ import {
 	SilentDisplay,
 } from './testing/index.ts';
 
-interface RunRow {
-	readonly id: string;
-	readonly pipeline: string;
-	readonly status: string;
-	readonly default_harness: string | null;
-	readonly cwd: string;
-	readonly prd_source: string;
-	readonly started_at: number;
-	readonly ended_at: number | null;
-}
+const RunRow = Schema.Struct({
+	id: Schema.String,
+	pipeline: Schema.String,
+	status: Schema.String,
+	default_harness: Schema.NullOr(Schema.String),
+	cwd: Schema.String,
+	prd_source: Schema.String,
+	started_at: Schema.Number,
+	ended_at: Schema.NullOr(Schema.Number),
+});
 
-interface StepRow {
-	readonly run_id: string;
-	readonly ord: number;
-	readonly step_id: string;
-	readonly source: string;
-	readonly harness: string;
-	readonly until_pred: string | null;
-	readonly max_iters: number;
-	readonly status: string;
-}
+const StepRow = Schema.Struct({
+	run_id: Schema.String,
+	ord: Schema.Number,
+	step_id: Schema.String,
+	source: Schema.String,
+	harness: Schema.String,
+	until_pred: Schema.NullOr(Schema.String),
+	max_iters: Schema.Number,
+	status: Schema.String,
+});
 
-interface EventRow {
-	readonly seq: number;
-	readonly type: string;
-	readonly step_id: string | null;
-	readonly iter: number | null;
-}
+const EventRow = Schema.Struct({
+	seq: Schema.Number,
+	type: Schema.String,
+	step_id: Schema.NullOr(Schema.String),
+	iter: Schema.NullOr(Schema.Number),
+});
 
-interface IterRow {
-	readonly run_id: string;
-	readonly step_ord: number;
-	readonly n: number;
-	readonly started_at: number;
-	readonly ended_at: number | null;
-	readonly exit_code: number | null;
-}
+const IterRow = Schema.Struct({
+	run_id: Schema.String,
+	step_ord: Schema.Number,
+	n: Schema.Number,
+	started_at: Schema.Number,
+	ended_at: Schema.NullOr(Schema.Number),
+	exit_code: Schema.NullOr(Schema.Number),
+});
 
 const readDb = (dbPath: string) =>
 	Effect.gen(function* () {
 		const sql = yield* SqlClient;
-		const runs = yield* sql<RunRow>`SELECT * FROM run`;
-		const steps = yield* sql<StepRow>`SELECT * FROM step ORDER BY ord`;
-		const events = yield* sql<EventRow>`SELECT seq, type, step_id, iter FROM event ORDER BY seq`;
-		const iters = yield* sql<IterRow>`SELECT * FROM iter ORDER BY step_ord, n`;
+		const findRuns = SqlSchema.findAll({
+			Request: Schema.Void,
+			Result: RunRow,
+			execute: () => sql`SELECT * FROM run`,
+		});
+		const findSteps = SqlSchema.findAll({
+			Request: Schema.Void,
+			Result: StepRow,
+			execute: () => sql`SELECT * FROM step ORDER BY ord`,
+		});
+		const findEvents = SqlSchema.findAll({
+			Request: Schema.Void,
+			Result: EventRow,
+			execute: () => sql`SELECT seq, type, step_id, iter FROM event ORDER BY seq`,
+		});
+		const findIters = SqlSchema.findAll({
+			Request: Schema.Void,
+			Result: IterRow,
+			execute: () => sql`SELECT * FROM iter ORDER BY step_ord, n`,
+		});
+		const runs = yield* findRuns();
+		const steps = yield* findSteps();
+		const events = yield* findEvents();
+		const iters = yield* findIters();
 		return { runs, steps, events, iters };
 	}).pipe(
 		Effect.provide(SqliteClient.layer({ filename: dbPath, readonly: true })),
