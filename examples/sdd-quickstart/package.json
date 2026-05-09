@@ -1,0 +1,17 @@
+{
+	"name": "sdd-quickstart",
+	"version": "0.0.0",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"factory": "tsx ../../packages/cli/src/bin.ts"
+	},
+	"dependencies": {
+		"@factory/core": "workspace:*",
+		"@factory/harness-claude-code": "workspace:*"
+	},
+	"devDependencies": {
+		"tsx": "^4.19.2",
+		"typescript": "^5.9.2"
+	}
+}

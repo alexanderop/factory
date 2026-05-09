@@ -1,0 +1,26 @@
+{
+	"$schema": "https://turbo.build/schema.json",
+	"globalEnv": [
+		"OTEL_EXPORTER_OTLP_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_HEADERS",
+		"OTEL_SDK_DISABLED",
+		"ANTHROPIC_API_KEY",
+		"OPENAI_API_KEY"
+	],
+	"tasks": {
+		"dev": {
+			"persistent": true,
+			"cache": false
+		},
+		"build": {},
+		"//#check:lint": {},
+		"check:types": {
+			"dependsOn": ["build", "^build", "^check:types"],
+			"outputLogs": "errors-only"
+		},
+		"//#format:lint": {},
+		"//#format:style": {
+			"dependsOn": ["format:lint"]
+		}
+	}
+}

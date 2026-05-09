@@ -1,0 +1,25 @@
+{
+	"name": "@factory/core",
+	"version": "0.0.0",
+	"type": "module",
+	"private": true,
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"check:types": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@opentelemetry/api": "^1.9.0",
+		"@opentelemetry/exporter-trace-otlp-grpc": "^0.55.0",
+		"@opentelemetry/resources": "^1.30.0",
+		"@opentelemetry/sdk-node": "^0.55.0",
+		"@opentelemetry/semantic-conventions": "^1.30.0",
+		"gray-matter": "^4.0.3"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.10",
+		"typescript": "^5.9.2"
+	}
+}

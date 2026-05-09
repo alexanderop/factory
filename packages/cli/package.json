@@ -1,0 +1,25 @@
+{
+	"name": "@factory/cli",
+	"version": "0.0.0",
+	"type": "module",
+	"private": true,
+	"bin": {
+		"factory": "./src/bin.ts"
+	},
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"check:types": "tsc -p tsconfig.json --noEmit",
+		"dev": "tsx ./src/bin.ts"
+	},
+	"dependencies": {
+		"@factory/core": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.10",
+		"tsx": "^4.19.2",
+		"typescript": "^5.9.2"
+	}
+}
