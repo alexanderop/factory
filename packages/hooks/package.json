@@ -1,0 +1,24 @@
+{
+	"name": "@factory/hooks",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@effect/platform": "^0.96.1",
+		"@effect/platform-node": "^0.106.0",
+		"@factory/core": "workspace:*",
+		"effect": "^3.21.2"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.10",
+		"typescript": "^5.9.2"
+	}
+}

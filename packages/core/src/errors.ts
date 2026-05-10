@@ -98,6 +98,24 @@ export class ResumeUnavailableError extends Data.TaggedError('ResumeUnavailableE
 	readonly reason: 'already-complete' | 'not-found' | 'in-progress';
 }> {}
 
+/** Hook spec failed to compile to a harness config file. */
+export class HookCompileError extends Data.TaggedError('HookCompileError')<{
+	readonly message: string;
+	readonly hookId?: string;
+}> {}
+
+/** A hook handler threw or produced an unexpected value at runtime. */
+export class HookRuntimeError extends Data.TaggedError('HookRuntimeError')<{
+	readonly message: string;
+	readonly hookId?: string;
+}> {}
+
+/** Required harness hook configuration is missing or invalid (e.g. Codex flag). */
+export class HookConfigError extends Data.TaggedError('HookConfigError')<{
+	readonly message: string;
+	readonly harness?: string;
+}> {}
+
 export type FactoryError =
 	| StepLoadError
 	| HarnessNotFoundError
@@ -113,4 +131,7 @@ export type FactoryError =
 	| UnsupportedPermissionError
 	| CapabilityMismatchError
 	| ResumeMismatchError
-	| ResumeUnavailableError;
+	| ResumeUnavailableError
+	| HookCompileError
+	| HookRuntimeError
+	| HookConfigError;
