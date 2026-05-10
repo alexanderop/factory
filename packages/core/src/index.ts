@@ -12,6 +12,7 @@ export {
 	ConfigLoadError,
 	type FactoryError,
 	HarnessExecError,
+	HarnessIdleTimeoutError,
 	HarnessNotFoundError,
 	HarnessSpawnError,
 	MissingHarnessError,

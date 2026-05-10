@@ -1,12 +1,23 @@
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertInstanceOf, assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Layer, Ref } from 'effect';
+import { Cause, Effect, Exit, Layer, Logger, LogLevel, Ref, Stream } from 'effect';
 import { CapabilityMismatchError, type HarnessCapabilities } from './capabilities.ts';
-import { StepMaxItersError, UnsupportedPermissionError } from './errors.ts';
-import { RunId } from './ids.ts';
+import {
+	HarnessExecError,
+	HarnessIdleTimeoutError,
+	RunRecordingError,
+	StepIdleTimeoutError,
+	StepMaxItersError,
+	UnsupportedPermissionError,
+} from './errors.ts';
+import { HarnessName, RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
-import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
+import {
+	InMemoryRunWorkspace,
+	RunWorkspace,
+	type RunWorkspaceService,
+} from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
 	harnessRegistryLayer,
@@ -16,7 +27,7 @@ import {
 	scriptedUntilEvaluator,
 	SilentDisplay,
 } from './testing/index.ts';
-import type { ExecOpts, FactoryEvent, PermissionMode } from './types.ts';
+import type { ExecOpts, FactoryEvent, Harness, PermissionMode } from './types.ts';
 
 const fakeHarness = scriptedHarness('claude-code', [
 	{ stdout: 'iter-1-output\n' },
@@ -396,6 +407,70 @@ Iterate until done.`,
 		);
 	});
 
+	it.effect(
+		'maps HarnessIdleTimeoutError to StepIdleTimeoutError carrying the running step brand',
+		() =>
+			Effect.gen(function* () {
+				const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
+				const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
+
+				const fullCaps: HarnessCapabilities = {
+					loadSession: false,
+					mcp: { http: false, sse: false },
+					prompt: { image: false, audio: false, embeddedContext: false },
+					session: { list: false, resume: false, close: false },
+					factory: {
+						permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
+						toolEvents: false,
+					},
+				};
+				const idleHarness: Harness<'claude-code'> = {
+					name: 'claude-code',
+					capabilities: fullCaps,
+					exec: () =>
+						Effect.fail(
+							new HarnessIdleTimeoutError({
+								message: "harness 'claude-code' produced no output for 5000ms",
+								harness: HarnessName.make('claude-code'),
+								idleMs: 5000,
+							}),
+						),
+					stream: () =>
+						Stream.fail(
+							new HarnessIdleTimeoutError({
+								message: "harness 'claude-code' produced no output for 5000ms",
+								harness: HarnessName.make('claude-code'),
+								idleMs: 5000,
+							}),
+						),
+				};
+
+				const layer = Layer.mergeAll(
+					SilentDisplay.layer(displayRef),
+					recordingEventEmitter.layer(eventsRef),
+					harnessRegistryLayer([idleHarness]),
+					InMemoryStepLoader.layer(new Map([['./steps/only.md', `---\nname: only\n---\nDo it.`]])),
+					scriptedUntilEvaluator.layer([true]),
+					InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
+				).pipe(Layer.provideMerge(NodeContext.layer));
+
+				const exit = yield* Effect.exit(
+					runFactoryEffect(
+						{ name: 'sdd', harness: 'claude-code' },
+						[{ id: 'only', source: './steps/only.md', options: {} }],
+						{ prd: 'inline PRD', cwd: process.cwd() },
+					).pipe(Effect.provide(layer)),
+				);
+
+				assertTrue(Exit.isFailure(exit));
+				const failure = Cause.failureOption(exit.cause);
+				assertTrue(failure._tag === 'Some');
+				assertInstanceOf(failure.value, StepIdleTimeoutError);
+				strictEqual(failure.value.step, 'only');
+				strictEqual(failure.value.timeoutMs, 5000);
+			}),
+	);
+
 	it.effect('fails with StepMaxItersError when until never holds', () =>
 		Effect.gen(function* () {
 			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
@@ -432,5 +507,88 @@ Iterate.`,
 			const errorEvent = events.find((e) => e.type === 'error');
 			assertTrue(errorEvent !== undefined);
 		}),
+	);
+
+	it.effect(
+		'preserves the original failure when recordRunEnd fails (recording-side error is logged, not propagated)',
+		() =>
+			Effect.gen(function* () {
+				const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
+				const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
+
+				const failingHarness = scriptedHarness('claude-code', [
+					{ stdout: '', stderr: 'boom\n', exitCode: 7 },
+				]);
+
+				const recordedEnds: Array<{ status: 'ok' | 'error' | 'interrupted' }> = [];
+				const stubWorkspace: RunWorkspaceService = {
+					runId: RunId.make('record-end-fail-run'),
+					runDir: '/tmp/stub-record-end-fail',
+					recordRunStart: () => Effect.void,
+					recordRunResume: () => Effect.fail(new RunRecordingError({ message: 'not used' })),
+					recordRunEnd: (args) => {
+						recordedEnds.push({ status: args.status });
+						return Effect.fail(
+							new RunRecordingError({
+								message: `simulated recordRunEnd failure for status=${args.status}`,
+							}),
+						);
+					},
+					recordStepStart: () => Effect.void,
+					recordStepEnd: () => Effect.void,
+					recordIterStart: () =>
+						Effect.succeed({
+							iterDir: '/tmp/stub/iter',
+							stdoutPath: '/tmp/stub/iter/stdout.log',
+							stderrPath: '/tmp/stub/iter/stderr.log',
+							promptPath: '/tmp/stub/iter/prompt.md',
+							eventsPath: '/tmp/stub/iter/events.jsonl',
+						}),
+					recordIterEnd: () => Effect.void,
+					appendEvent: () => Effect.void,
+					appendStdout: () => Effect.void,
+					appendStderr: () => Effect.void,
+					appendIterEvent: () => Effect.void,
+				};
+
+				const capturedCauses: Array<Cause.Cause<unknown>> = [];
+				const captureLogger = Logger.make((options) => {
+					capturedCauses.push(options.cause);
+				});
+
+				const layer = Layer.mergeAll(
+					SilentDisplay.layer(displayRef),
+					recordingEventEmitter.layer(eventsRef),
+					harnessRegistryLayer([failingHarness]),
+					InMemoryStepLoader.layer(new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']])),
+					scriptedUntilEvaluator.layer([true]),
+					Layer.succeed(RunWorkspace, stubWorkspace),
+					Logger.replace(Logger.defaultLogger, captureLogger),
+				).pipe(Layer.provideMerge(NodeContext.layer));
+
+				const exit = yield* Effect.exit(
+					runFactoryEffect(
+						{ name: 'sdd', harness: 'claude-code', harnesses: [failingHarness] },
+						[{ id: 'only', source: './steps/only.md', options: {} }],
+						{ prd: 'inline PRD', cwd: process.cwd() },
+					).pipe(Effect.provide(layer), Logger.withMinimumLogLevel(LogLevel.Debug)),
+				);
+
+				assertTrue(Exit.isFailure(exit));
+				const failure = Cause.failureOption(exit.cause);
+				assertTrue(failure._tag === 'Some');
+				assertInstanceOf(failure.value, HarnessExecError);
+
+				deepStrictEqual(
+					recordedEnds.map((e) => e.status),
+					['error'],
+				);
+
+				const recordingErrorLogged = capturedCauses.some((cause) => {
+					const opt = Cause.failureOption(cause);
+					return opt._tag === 'Some' && opt.value instanceof RunRecordingError;
+				});
+				assertTrue(recordingErrorLogged);
+			}),
 	);
 });

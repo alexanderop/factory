@@ -2,10 +2,22 @@ import { FileSystem, Path } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Layer, Predicate, Ref, Schema } from 'effect';
+import {
+	Cause,
+	Deferred,
+	Effect,
+	Exit,
+	Fiber,
+	Layer,
+	Predicate,
+	Ref,
+	Schema,
+	Stream,
+} from 'effect';
 import { ResumeUnavailableError, StepMaxItersError } from './errors.ts';
 import { HarnessName, PipelineName, RunId, StepId } from './ids.ts';
 import { resumeFactoryEffect, runFactoryEffect } from './orchestrator.ts';
+import type { Harness, HarnessEvent } from './types.ts';
 import {
 	decodeRun,
 	decodeStep,
@@ -243,6 +255,59 @@ describe('runWorkspace integration (file-only manifests)', () => {
 			strictEqual(summary.untilPassed, true);
 		}).pipe(Effect.provide(NodeContext.layer)),
 	);
+
+	it.scoped('records run as interrupted when fiber is interrupted mid-step', () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-interrupt-' });
+			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
+			const runId = RunId.make('interrupt-test-run');
+
+			const stepStarted = yield* Deferred.make<void>();
+
+			const hangingHarness: Harness<'claude-code'> = {
+				name: 'claude-code',
+				capabilities: {
+					loadSession: false,
+					mcp: { http: false, sse: false },
+					prompt: { image: false, audio: false, embeddedContext: false },
+					session: { list: false, resume: false, close: false },
+					factory: {
+						permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
+						toolEvents: false,
+					},
+				},
+				exec: () => Effect.never,
+				stream: (): Stream.Stream<HarnessEvent> => {
+					const never: Stream.Stream<HarnessEvent> = Stream.never;
+					return Stream.unwrap(Effect.as(Deferred.complete(stepStarted, Effect.void), never));
+				},
+			};
+
+			const layer = Layer.mergeAll(
+				SilentDisplay.layer(displayRef),
+				noopEventEmitter.layer,
+				harnessRegistryLayer([hangingHarness]),
+				InMemoryStepLoader.layer(new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']])),
+				scriptedUntilEvaluator.layer([true]),
+				LiveRunWorkspace.layer({ runId, cwd: tmp }),
+			).pipe(Layer.provideMerge(NodeContext.layer));
+
+			const fiber = yield* runFactoryEffect(
+				{ name: 'sdd', harness: 'claude-code', harnesses: [hangingHarness] },
+				[{ id: 'only', source: './steps/only.md', options: {} }],
+				{ prd: 'inline PRD', cwd: tmp },
+			).pipe(Effect.provide(layer), Effect.fork);
+
+			yield* Deferred.await(stepStarted);
+			yield* Fiber.interrupt(fiber);
+
+			const runDir = `${tmp}/.factory/runs/${runId}`;
+			const run = yield* decodeRun(yield* fs.readFileString(`${runDir}/run.json`));
+			strictEqual(run.status, 'interrupted');
+			assertTrue(run.endedAt !== undefined);
+		}).pipe(Effect.provide(NodeContext.layer)),
+	);
 });
 
 describe('LiveRunWorkspace.resumed', () => {
@@ -293,6 +358,55 @@ describe('LiveRunWorkspace.resumed', () => {
 		],
 	});
 
+	const failedStep = (ord: number, stepId: string): StepRecord => ({
+		ord,
+		stepId: StepId.make(stepId),
+		source: `./steps/${stepId}.md`,
+		harness: HarnessName.make('claude-code'),
+		maxIters: 2,
+		startedAt: 1_700_000_000_100,
+		endedAt: 1_700_000_000_300,
+		status: 'failed',
+		iters: [
+			{
+				n: 1,
+				startedAt: 1_700_000_000_110,
+				endedAt: 1_700_000_000_190,
+				exitCode: 1,
+				untilPassed: false,
+			},
+			{
+				n: 2,
+				startedAt: 1_700_000_000_210,
+				endedAt: 1_700_000_000_290,
+				exitCode: 1,
+				untilPassed: false,
+			},
+		],
+	});
+
+	const planMd = '---\nname: plan\nuntil: "output contains: PLAN"\nmaxIters: 1\n---\nPlan.';
+	const ralphMd = '---\nname: ralph\nuntil: "output contains: DONE"\nmaxIters: 2\n---\nIter.';
+	const stepsMap = new Map([
+		['./steps/plan.md', planMd],
+		['./steps/ralph.md', ralphMd],
+	]);
+	const pipelineSteps = [
+		{ id: 'plan', source: './steps/plan.md', options: {} },
+		{ id: 'ralph', source: './steps/ralph.md', options: {} },
+	];
+
+	const recordingHarness = (
+		responses: ReadonlyArray<{ stdout: string }>,
+		calls: string[],
+		phase: 'phase1' | 'phase2',
+	) =>
+		scriptedHarness('claude-code', responses, {
+			onCall: (opts) => {
+				calls.push(opts.prompt.includes('Plan.') ? `${phase}:plan` : `${phase}:ralph`);
+			},
+		});
+
 	it.scoped('hydrates run + step records from disk', () =>
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
@@ -320,65 +434,42 @@ describe('LiveRunWorkspace.resumed', () => {
 		}).pipe(Effect.provide(NodeContext.layer)),
 	);
 
-	it.scoped('end-to-end: failed run resumes from first non-ok step', () =>
+	it.scoped('phase-1 records run + step state on failure', () =>
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
-			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-resume-e2e-' });
-			const runId = RunId.make('e2e-run');
+			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-phase1-' });
+			const runId = RunId.make('phase1-run');
 
-			const planMd = '---\nname: plan\nuntil: "output contains: PLAN"\nmaxIters: 1\n---\nPlan.';
-			const ralphMd = '---\nname: ralph\nuntil: "output contains: DONE"\nmaxIters: 2\n---\nIter.';
-			const stepsMap = new Map([
-				['./steps/plan.md', planMd],
-				['./steps/ralph.md', ralphMd],
-			]);
-
-			const callsRef = yield* Ref.make<ReadonlyArray<string>>([]);
-			const recordCall = (label: string) =>
-				Effect.runSync(Ref.update(callsRef, (xs) => [...xs, label]));
-
-			// Phase 1: ralph's until never passes → StepMaxItersError on step 1.
-			const phase1Harness = scriptedHarness(
-				'claude-code',
+			const calls: string[] = [];
+			const harness = recordingHarness(
 				[{ stdout: 'plan ok\n' }, { stdout: 'iter 1\n' }, { stdout: 'iter 2\n' }],
-				{
-					onCall: (opts) => {
-						if (opts.prompt.includes('Plan.')) recordCall('phase1:plan');
-						else recordCall('phase1:ralph');
-					},
-				},
+				calls,
+				'phase1',
 			);
 
-			const phase1Layer = Layer.mergeAll(
+			const layer = Layer.mergeAll(
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
-				harnessRegistryLayer([phase1Harness]),
+				harnessRegistryLayer([harness]),
 				InMemoryStepLoader.layer(stepsMap),
 				scriptedUntilEvaluator.layer([true, false, false]),
 				LiveRunWorkspace.layer({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));
 
-			const phase1Steps = [
-				{ id: 'plan', source: './steps/plan.md', options: {} },
-				{ id: 'ralph', source: './steps/ralph.md', options: {} },
-			];
-
-			const phase1Exit = yield* Effect.exit(
+			const exit = yield* Effect.exit(
 				runFactoryEffect(
-					{ name: 'sdd', harness: 'claude-code', harnesses: [phase1Harness] },
-					phase1Steps,
+					{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
+					pipelineSteps,
 					{ prd: 'inline PRD', cwd: tmp },
-				).pipe(Effect.provide(phase1Layer)),
+				).pipe(Effect.provide(layer)),
 			);
-			const phase1Failure = Cause.failureOption(
-				Exit.isFailure(phase1Exit) ? phase1Exit.cause : Cause.empty,
-			);
-			assertTrue(phase1Failure._tag === 'Some');
-			assertTrue(phase1Failure.value instanceof StepMaxItersError);
+			const failure = Cause.failureOption(Exit.isFailure(exit) ? exit.cause : Cause.empty);
+			assertTrue(failure._tag === 'Some');
+			assertTrue(failure.value instanceof StepMaxItersError);
 
 			const runDir = `${tmp}/.factory/runs/${runId}`;
-			const runAfterPhase1 = yield* decodeRun(yield* fs.readFileString(`${runDir}/run.json`));
-			strictEqual(runAfterPhase1.status, 'error');
+			const run = yield* decodeRun(yield* fs.readFileString(`${runDir}/run.json`));
+			strictEqual(run.status, 'error');
 			const planStep = yield* decodeStep(
 				yield* fs.readFileString(`${runDir}/steps/00-plan/step.json`),
 			);
@@ -387,39 +478,72 @@ describe('LiveRunWorkspace.resumed', () => {
 				yield* fs.readFileString(`${runDir}/steps/01-ralph/step.json`),
 			);
 			strictEqual(ralphStep.status, 'failed');
+		}).pipe(Effect.provide(NodeContext.layer)),
+	);
 
-			// Phase 2: resume. ralph's until now passes immediately. Plan must NOT be re-run.
-			const phase2Harness = scriptedHarness('claude-code', [{ stdout: 'DONE\n' }], {
-				onCall: (opts) => {
-					if (opts.prompt.includes('Plan.')) recordCall('phase2:plan');
-					else recordCall('phase2:ralph');
-				},
-			});
+	it.scoped('resume reuses ok steps without re-invoking plan', () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-resume-reuse-' });
+			const runId = RunId.make('resume-reuse-run');
+			const runDir = `${tmp}/.factory/runs/${runId}`;
+			yield* seedRunDir(runDir, runId, [completedStep(0, 'plan'), failedStep(1, 'ralph')]);
 
-			const phase2Layer = Layer.mergeAll(
+			const calls: string[] = [];
+			const harness = recordingHarness([{ stdout: 'DONE\n' }], calls, 'phase2');
+
+			const layer = Layer.mergeAll(
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
-				harnessRegistryLayer([phase2Harness]),
+				harnessRegistryLayer([harness]),
 				InMemoryStepLoader.layer(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
 				LiveRunWorkspace.resumed({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));
 
 			yield* resumeFactoryEffect(
-				{ name: 'sdd', harness: 'claude-code', harnesses: [phase2Harness] },
-				phase1Steps,
+				{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
+				pipelineSteps,
 				{ runId, cwd: tmp },
-			).pipe(Effect.provide(phase2Layer));
+			).pipe(Effect.provide(layer));
 
+			deepStrictEqual(calls, ['phase2:ralph']);
+		}).pipe(Effect.provide(NodeContext.layer)),
+	);
+
+	it.scoped('resume re-executes the failed step', () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-resume-rerun-' });
+			const runId = RunId.make('resume-rerun-run');
+			const runDir = `${tmp}/.factory/runs/${runId}`;
+			yield* seedRunDir(runDir, runId, [completedStep(0, 'plan'), failedStep(1, 'ralph')]);
+
+			const calls: string[] = [];
+			const harness = recordingHarness([{ stdout: 'DONE\n' }], calls, 'phase2');
+
+			const layer = Layer.mergeAll(
+				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
+				noopEventEmitter.layer,
+				harnessRegistryLayer([harness]),
+				InMemoryStepLoader.layer(stepsMap),
+				scriptedUntilEvaluator.layer([true]),
+				LiveRunWorkspace.resumed({ runId, cwd: tmp }),
+			).pipe(Layer.provideMerge(NodeContext.layer));
+
+			yield* resumeFactoryEffect(
+				{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
+				pipelineSteps,
+				{ runId, cwd: tmp },
+			).pipe(Effect.provide(layer));
+
+			deepStrictEqual(calls, ['phase2:ralph']);
 			const finalRun = yield* decodeRun(yield* fs.readFileString(`${runDir}/run.json`));
 			strictEqual(finalRun.status, 'ok');
 			const finalRalph = yield* decodeStep(
 				yield* fs.readFileString(`${runDir}/steps/01-ralph/step.json`),
 			);
 			strictEqual(finalRalph.status, 'ok');
-
-			const calls = yield* Ref.get(callsRef);
-			deepStrictEqual(calls, ['phase1:plan', 'phase1:ralph', 'phase1:ralph', 'phase2:ralph']);
 		}).pipe(Effect.provide(NodeContext.layer)),
 	);
 
@@ -431,12 +555,6 @@ describe('LiveRunWorkspace.resumed', () => {
 			const runDir = `${tmp}/.factory/runs/${runId}`;
 			yield* seedRunDir(runDir, runId, [completedStep(0, 'plan'), completedStep(1, 'ralph')]);
 
-			const planMd = '---\nname: plan\n---\nPlan.';
-			const ralphMd = '---\nname: ralph\n---\nIter.';
-			const stepsMap = new Map([
-				['./steps/plan.md', planMd],
-				['./steps/ralph.md', ralphMd],
-			]);
 			const harness = scriptedHarness('claude-code', [{ stdout: 'x\n' }]);
 			const layer = Layer.mergeAll(
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
@@ -450,10 +568,7 @@ describe('LiveRunWorkspace.resumed', () => {
 			const exit = yield* Effect.exit(
 				resumeFactoryEffect(
 					{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
-					[
-						{ id: 'plan', source: './steps/plan.md', options: {} },
-						{ id: 'ralph', source: './steps/ralph.md', options: {} },
-					],
+					pipelineSteps,
 					{ runId, cwd: tmp },
 				).pipe(Effect.provide(layer)),
 			);

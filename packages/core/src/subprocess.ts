@@ -2,8 +2,13 @@ import { Command, type CommandExecutor } from '@effect/platform';
 import { Duration, Effect, Metric, Stream } from 'effect';
 import { harnessSpawnsTotal } from './metrics.ts';
 import type { HarnessCapabilities } from './capabilities.ts';
-import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
-import { HarnessName, StepId } from './ids.ts';
+import {
+	HarnessExecError,
+	HarnessIdleTimeoutError,
+	HarnessSpawnError,
+	UnsupportedPermissionError,
+} from './errors.ts';
+import { HarnessName } from './ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from './types.ts';
 
 export interface SubprocessHarnessConfig<Name extends string, P extends PermissionMode> {
@@ -35,20 +40,28 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 	const supports: ReadonlyArray<PermissionMode> = config.capabilities.factory.permissions;
 	const isSupported = (mode: PermissionMode): mode is P => supports.includes(mode);
 
-	const buildCommand = (opts: ExecOpts): Command.Command => {
-		if (!isSupported(opts.permissions)) {
-			throw new Error(
-				`harness '${config.name}' does not support permission mode '${opts.permissions}' (orchestrator should have rejected this earlier)`,
+	const buildCommand = (
+		opts: ExecOpts,
+	): Effect.Effect<Command.Command, UnsupportedPermissionError> =>
+		Effect.gen(function* () {
+			if (!isSupported(opts.permissions)) {
+				return yield* Effect.fail(
+					new UnsupportedPermissionError({
+						message: `harness '${config.name}' does not support permission mode '${opts.permissions}' (supported: ${supports.join(', ') || '(none)'})`,
+						harness: harnessName,
+						requested: opts.permissions,
+						supported: supports,
+					}),
+				);
+			}
+			const base = Command.make(
+				config.bin,
+				...config.buildArgs(opts.prompt, { permissions: opts.permissions }),
 			);
-		}
-		const base = Command.make(
-			config.bin,
-			...config.buildArgs(opts.prompt, { permissions: opts.permissions }),
-		);
-		const withStdin = Command.stdin(base, Stream.empty);
-		const withCwd = opts.cwd ? Command.workingDirectory(withStdin, opts.cwd) : withStdin;
-		return opts.env ? Command.env(withCwd, opts.env) : withCwd;
-	};
+			const withStdin = Command.stdin(base, Stream.empty);
+			const withCwd = opts.cwd ? Command.workingDirectory(withStdin, opts.cwd) : withStdin;
+			return opts.env ? Command.env(withCwd, opts.env) : withCwd;
+		});
 
 	const toSpawnError = (e: unknown): HarnessSpawnError =>
 		new HarnessSpawnError({
@@ -82,58 +95,62 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		opts: ExecOpts,
 	): Stream.Stream<
 		HarnessEvent,
-		HarnessSpawnError | StepIdleTimeoutError,
+		HarnessSpawnError | HarnessIdleTimeoutError | UnsupportedPermissionError,
 		CommandExecutor.CommandExecutor
 	> => {
-		const events: Stream.Stream<HarnessEvent, HarnessSpawnError, CommandExecutor.CommandExecutor> =
-			Stream.unwrapScoped(
-				Effect.gen(function* () {
-					const proc = yield* Command.start(buildCommand(opts)).pipe(
+		const events: Stream.Stream<
+			HarnessEvent,
+			HarnessSpawnError | UnsupportedPermissionError,
+			CommandExecutor.CommandExecutor
+		> = Stream.unwrapScoped(
+			Effect.gen(function* () {
+				const command = yield* buildCommand(opts);
+				const proc = yield* Command.start(command).pipe(
+					Effect.mapError(toSpawnError),
+					Effect.tap(() =>
+						Metric.increment(harnessSpawnsTotal).pipe(
+							Effect.tagMetrics('harness', config.name),
+							Effect.tagMetrics('outcome', 'ok'),
+						),
+					),
+					Effect.tapError(() =>
+						Metric.increment(harnessSpawnsTotal).pipe(
+							Effect.tagMetrics('harness', config.name),
+							Effect.tagMetrics('outcome', 'error'),
+						),
+					),
+					Effect.withSpan(`factory.harness.spawn ${config.name}`, {
+						kind: 'producer',
+						attributes: {
+							'factory.harness': config.name,
+							'factory.harness.bin': config.bin,
+							'factory.permission.mode': opts.permissions,
+							'factory.cwd': opts.cwd ?? '',
+						},
+					}),
+				);
+				const exit: Stream.Stream<HarnessEvent, HarnessSpawnError> = Stream.fromEffect(
+					proc.exitCode.pipe(
+						Effect.map((code) => ({ type: 'exit', code }) satisfies HarnessEvent),
 						Effect.mapError(toSpawnError),
-						Effect.tap(() =>
-							Metric.increment(harnessSpawnsTotal).pipe(
-								Effect.tagMetrics('harness', config.name),
-								Effect.tagMetrics('outcome', 'ok'),
-							),
-						),
-						Effect.tapError(() =>
-							Metric.increment(harnessSpawnsTotal).pipe(
-								Effect.tagMetrics('harness', config.name),
-								Effect.tagMetrics('outcome', 'error'),
-							),
-						),
-						Effect.withSpan(`factory.harness.spawn ${config.name}`, {
-							kind: 'producer',
-							attributes: {
-								'factory.harness': config.name,
-								'factory.harness.bin': config.bin,
-								'factory.permission.mode': opts.permissions,
-								'factory.cwd': opts.cwd ?? '',
-							},
-						}),
-					);
-					const exit: Stream.Stream<HarnessEvent, HarnessSpawnError> = Stream.fromEffect(
-						proc.exitCode.pipe(
-							Effect.map((code) => ({ type: 'exit', code }) satisfies HarnessEvent),
-							Effect.mapError(toSpawnError),
-						),
-					);
-					return Stream.concat(
-						Stream.merge(stdoutEvents(proc.stdout), stderrEvents(proc.stderr)),
-						exit,
-					);
-				}),
-			);
+					),
+				);
+				return Stream.concat(
+					Stream.merge(stdoutEvents(proc.stdout), stderrEvents(proc.stderr)),
+					exit,
+				);
+			}),
+		);
 
 		const withTimeout =
 			opts.idleTimeoutMs && opts.idleTimeoutMs > 0
 				? events.pipe(
 						Stream.timeoutFail(
 							() =>
-								new StepIdleTimeoutError({
+								new HarnessIdleTimeoutError({
 									message: `harness '${config.name}' produced no output for ${opts.idleTimeoutMs}ms`,
-									step: StepId.make(''),
-									timeoutMs: opts.idleTimeoutMs ?? 0,
+									harness: harnessName,
+									idleMs: opts.idleTimeoutMs ?? 0,
 								}),
 							Duration.millis(opts.idleTimeoutMs),
 						),
@@ -154,7 +171,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		opts: ExecOpts,
 	): Effect.Effect<
 		ExecResult,
-		HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
+		HarnessExecError | HarnessSpawnError | HarnessIdleTimeoutError | UnsupportedPermissionError,
 		CommandExecutor.CommandExecutor
 	> =>
 		Effect.gen(function* () {
