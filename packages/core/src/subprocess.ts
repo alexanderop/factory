@@ -265,7 +265,7 @@ const mergedOpts = (authEnv: Record<string, string>, opts: ExecOpts): ExecOpts =
 	env: { ...authEnv, ...opts.env },
 });
 
-const authKindStr = (auth: HarnessAuth): string => {
+export const authKindStr = (auth: HarnessAuth): string => {
 	switch (auth._tag) {
 		case 'ApiKey':
 			return 'api-key';

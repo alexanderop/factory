@@ -1,28 +1,15 @@
 import { Args, Command, Options } from '@effect/cli';
 import { Path } from '@effect/platform';
 import { Effect, Option } from 'effect';
-import type { Harness, HarnessAuth } from '@factory/core';
+import { authKindStr, type Harness } from '@factory/core';
 import { loadFactoryConfig } from '../loadConfig.ts';
-
-const authTagLabel = (auth: HarnessAuth): string => {
-	switch (auth._tag) {
-		case 'Inherit':
-			return 'inherit';
-		case 'ApiKey':
-			return 'api-key';
-		case 'Env':
-			return 'env';
-		case 'Helper':
-			return 'helper';
-	}
-};
 
 const checkMark = (name: string): string => (name in process.env ? '✓' : '✗');
 
 const formatHarness = (harness: Harness): string => {
 	const lines: string[] = [];
 	lines.push(`harness: ${harness.name}`);
-	lines.push(`auth: ${authTagLabel(harness.currentAuth)}`);
+	lines.push(`auth: ${authKindStr(harness.currentAuth)}`);
 
 	if (harness.auth.envVars.length > 0) {
 		lines.push('');
@@ -67,15 +54,10 @@ const cwdOption = Options.directory('cwd').pipe(
 	Options.optional,
 );
 
-const resolveOption = Options.boolean('resolve').pipe(
-	Options.withDescription('Call Helper.fetch and print resolved key names (no values printed)'),
-	Options.withDefault(false),
-);
-
 export const doctorCommand = Command.make(
 	'doctor',
-	{ name: nameArg, cwd: cwdOption, resolve: resolveOption },
-	({ name, cwd: cwdOpt, resolve: _resolve }) =>
+	{ name: nameArg, cwd: cwdOption },
+	({ name, cwd: cwdOpt }) =>
 		Effect.gen(function* () {
 			const path = yield* Path.Path;
 			const cwd = Option.getOrUndefined(cwdOpt) ?? path.resolve(process.cwd());
