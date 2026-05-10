@@ -42,25 +42,26 @@ describe('observability', () => {
 			const spans = yield* getFinishedSpans();
 			const names = new Set(spans.map((s) => s.name));
 
-			assertTrue(names.has('factory.run'));
-			assertTrue(names.has('factory.step'));
-			assertTrue(names.has('factory.iter'));
-			assertTrue(names.has('factory.step.load'));
+			assertTrue(names.has('factory.run sdd'));
+			assertTrue(names.has('factory.step only'));
+			assertTrue(names.has('factory.step.run only'));
+			assertTrue(names.has('factory.iter only#1'));
+			assertTrue(names.has('factory.step.load only'));
 
-			const run = spans.find((s) => s.name === 'factory.run');
+			const run = spans.find((s) => s.name === 'factory.run sdd');
 			assertTrue(run !== undefined);
 			deepStrictEqual(run.attributes['factory.pipeline'], 'sdd');
 			deepStrictEqual(run.attributes['factory.run.id'], 'test-run');
 			deepStrictEqual(run.attributes['factory.harness'], 'claude-code');
 			deepStrictEqual(run.attributes['factory.permission.mode'], 'skip');
 
-			const step = spans.find((s) => s.name === 'factory.step');
+			const step = spans.find((s) => s.name === 'factory.step only');
 			assertTrue(step !== undefined);
 			deepStrictEqual(step.attributes['factory.step'], 'only');
 			deepStrictEqual(step.attributes['factory.harness'], 'claude-code');
 			deepStrictEqual(step.attributes['factory.permission.mode'], 'skip');
 
-			const iter = spans.find((s) => s.name === 'factory.iter');
+			const iter = spans.find((s) => s.name === 'factory.iter only#1');
 			assertTrue(iter !== undefined);
 			deepStrictEqual(iter.attributes['factory.iter'], 1);
 			deepStrictEqual(iter.attributes['factory.iter.max'], 1);
@@ -99,7 +100,7 @@ describe('observability', () => {
 			);
 
 			const spans = yield* getFinishedSpans();
-			const step = spans.find((s) => s.name === 'factory.step');
+			const step = spans.find((s) => s.name === 'factory.step ralph');
 			assertTrue(step !== undefined);
 			deepStrictEqual(step.attributes['factory.error._tag'], 'StepMaxItersError');
 		}).pipe(Effect.provide(OtelTestLayer)),
@@ -142,7 +143,7 @@ describe('observability', () => {
 			).pipe(Effect.provide(layer));
 
 			const spans = yield* getFinishedSpans();
-			const iter = spans.find((s) => s.name === 'factory.iter');
+			const iter = spans.find((s) => s.name === 'factory.iter only#1');
 			assertTrue(iter !== undefined);
 			deepStrictEqual(iter.attributes['factory.iter.assistant.message.count'], 2);
 			deepStrictEqual(iter.attributes['factory.iter.tool.calls'], 2);
@@ -186,7 +187,7 @@ describe('observability', () => {
 			).pipe(Effect.provide(layer));
 
 			const spans = yield* getFinishedSpans();
-			const iter = spans.find((s) => s.name === 'factory.iter');
+			const iter = spans.find((s) => s.name === 'factory.iter only#1');
 			assertTrue(iter !== undefined);
 			deepStrictEqual(iter.attributes['factory.iter.tokens.input'], 10);
 			deepStrictEqual(iter.attributes['factory.iter.tokens.output'], 20);
@@ -289,7 +290,7 @@ describe('observability', () => {
 			).pipe(Effect.provide(layer));
 
 			const spans = yield* getFinishedSpans();
-			const iter = spans.find((s) => s.name === 'factory.iter');
+			const iter = spans.find((s) => s.name === 'factory.iter only#1');
 			assertTrue(iter !== undefined);
 			strictEqual(iter.status.code, 2);
 			deepStrictEqual(iter.attributes['factory.iter.tool.calls_failed'], 1);
@@ -330,7 +331,7 @@ describe('observability', () => {
 			).pipe(Effect.provide(layer));
 
 			const spans = yield* getFinishedSpans();
-			const iter = spans.find((s) => s.name === 'factory.iter');
+			const iter = spans.find((s) => s.name === 'factory.iter only#1');
 			assertTrue(iter !== undefined);
 			const eventNames = new Set(iter.events.map((e) => e.name));
 			assertTrue(eventNames.has('assistant.message'));

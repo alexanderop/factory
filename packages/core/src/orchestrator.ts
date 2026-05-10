@@ -578,7 +578,7 @@ const runStep = (
 					passed = true;
 				} else {
 					passed = yield* evaluator.evaluate(until, { step: stepId, cwd, lastResult }).pipe(
-						Effect.withSpan(`factory.until.eval`, {
+						Effect.withSpan(`factory.until.eval ${stepId}#${i}`, {
 							attributes: {
 								'factory.until.predicate': until,
 								'factory.step': stepId,
@@ -600,7 +600,7 @@ const runStep = (
 				}
 				return passed;
 			}).pipe(
-				Effect.withSpan(`factory.iter`, {
+				Effect.withSpan(`factory.iter ${stepId}#${i}`, {
 					attributes: {
 						'factory.run.id': runId,
 						'factory.step': stepId,
@@ -661,8 +661,7 @@ const runStep = (
 			);
 		}
 	}).pipe(
-		recordTaggedError,
-		Effect.withSpan(`factory.step`, {
+		Effect.withSpan(`factory.step.run ${args.stepId}`, {
 			attributes: {
 				'factory.step': args.stepId,
 				'factory.harness': args.harness.name,
@@ -707,71 +706,86 @@ const runStepLoop = (args: StepLoopArgs) =>
 				yield* display.stepEnd(stepId, true);
 				continue;
 			}
-			const loaded = yield* loader.load(entry.source, cwd).pipe(
-				Effect.withSpan(`factory.step.load`, {
+			yield* Effect.gen(function* () {
+				const loaded = yield* loader.load(entry.source, cwd).pipe(
+					Effect.withSpan(`factory.step.load ${stepId}`, {
+						attributes: {
+							'factory.step': stepId,
+							'factory.step.source': entry.source,
+						},
+					}),
+				);
+				const harnessName =
+					(entry.options.harness ? HarnessName.make(entry.options.harness) : undefined) ??
+					loaded.frontmatter.harness ??
+					defaultHarness;
+				if (!harnessName) {
+					return yield* Effect.fail(
+						new MissingHarnessError({
+							message: `step '${stepId}' has no harness (factory({harness}), step option, or frontmatter required)`,
+							step: stepId,
+						}),
+					);
+				}
+				const harness = yield* registry.resolve(harnessName);
+				const supportedPermissions = harness.capabilities.factory.permissions;
+				const permissions = resolvePermissions(
+					permissionsOverride,
+					loaded,
+					entry.options,
+					factoryOpts,
+					harness,
+				);
+				yield* Effect.annotateCurrentSpan({
+					'factory.harness': harnessName,
+					'factory.permission.mode': permissions,
+				});
+				if (!supportedPermissions.includes(permissions)) {
+					return yield* Effect.fail(
+						new UnsupportedPermissionError({
+							message: `harness '${harnessName}' does not support permission mode '${permissions}' (supported: ${supportedPermissions.join(', ') || '(none)'})`,
+							harness: harnessName,
+							requested: permissions,
+							supported: supportedPermissions,
+						}),
+					);
+				}
+				const missing = matchRequirements(
+					harness.capabilities,
+					entry.options.requires ?? loaded.frontmatter.requires,
+				);
+				if (missing.length > 0) {
+					return yield* Effect.fail(
+						new CapabilityMismatchError({
+							message: `harness '${harnessName}' is missing required capabilities: ${missing.join(', ')}`,
+							harness: harnessName,
+							missing,
+						}),
+					);
+				}
+				yield* runStep({
+					runId,
+					stepOrd: ord,
+					stepId,
+					loaded,
+					harness,
+					harnessName,
+					options: entry.options,
+					cwd,
+					prd,
+					idleTimeoutMs,
+					permissions,
+				});
+			}).pipe(
+				recordTaggedError,
+				Effect.withSpan(`factory.step ${stepId}`, {
 					attributes: {
 						'factory.step': stepId,
 						'factory.step.source': entry.source,
+						'factory.run.id': runId,
 					},
 				}),
 			);
-			const harnessName =
-				(entry.options.harness ? HarnessName.make(entry.options.harness) : undefined) ??
-				loaded.frontmatter.harness ??
-				defaultHarness;
-			if (!harnessName) {
-				return yield* Effect.fail(
-					new MissingHarnessError({
-						message: `step '${stepId}' has no harness (factory({harness}), step option, or frontmatter required)`,
-						step: stepId,
-					}),
-				);
-			}
-			const harness = yield* registry.resolve(harnessName);
-			const supportedPermissions = harness.capabilities.factory.permissions;
-			const permissions = resolvePermissions(
-				permissionsOverride,
-				loaded,
-				entry.options,
-				factoryOpts,
-				harness,
-			);
-			if (!supportedPermissions.includes(permissions)) {
-				return yield* Effect.fail(
-					new UnsupportedPermissionError({
-						message: `harness '${harnessName}' does not support permission mode '${permissions}' (supported: ${supportedPermissions.join(', ') || '(none)'})`,
-						harness: harnessName,
-						requested: permissions,
-						supported: supportedPermissions,
-					}),
-				);
-			}
-			const missing = matchRequirements(
-				harness.capabilities,
-				entry.options.requires ?? loaded.frontmatter.requires,
-			);
-			if (missing.length > 0) {
-				return yield* Effect.fail(
-					new CapabilityMismatchError({
-						message: `harness '${harnessName}' is missing required capabilities: ${missing.join(', ')}`,
-						harness: harnessName,
-						missing,
-					}),
-				);
-			}
-			yield* runStep({
-				runId,
-				stepOrd: ord,
-				stepId,
-				loaded,
-				harness,
-				harnessName,
-				options: entry.options,
-				cwd,
-				prd,
-				idleTimeoutMs,
-				permissions,
-			});
 		}
 	});
 
@@ -871,7 +885,7 @@ export const runFactoryEffect = (
 		yield* emitAndRecord(emitter, workspace, { type: 'run.end', runId });
 		yield* display.runEnd(runId);
 	}).pipe(
-		Effect.withSpan(`factory.run`, {
+		Effect.withSpan(`factory.run ${factoryOpts.name}`, {
 			attributes: { 'factory.pipeline': factoryOpts.name },
 		}),
 	);

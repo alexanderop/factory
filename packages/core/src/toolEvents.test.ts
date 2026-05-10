@@ -138,7 +138,7 @@ describe('tool-call telemetry', () => {
 			).pipe(Effect.provide(layer));
 
 			const spans = yield* getFinishedSpans();
-			const iter = spans.find((s) => s.name === 'factory.iter');
+			const iter = spans.find((s) => s.name === 'factory.iter only#1');
 			assertTrue(iter !== undefined);
 			deepStrictEqual(iter.attributes['factory.iter.cost_usd'], 0.0123);
 			deepStrictEqual(iter.attributes['factory.iter.tokens.input'], 100);
