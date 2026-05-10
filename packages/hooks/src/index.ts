@@ -1,5 +1,7 @@
 export { Hook } from './builders.ts';
 export type { EffectOptions, RuleOptions } from './builders.ts';
+export { HookCompiler } from './services/HookCompiler.ts';
+export type { CompileOptions, HookCompilerService } from './services/HookCompiler.ts';
 export { HookEmitter } from './services/HookEmitter.ts';
 export type { EmittedConfig, HookEmitterService } from './services/HookEmitter.ts';
 export { HookRegistry } from './services/HookRegistry.ts';
