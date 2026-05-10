@@ -14,4 +14,4 @@ export default factory({
 	.step('plan', step('plan'))
 	.step('branch', step('branch'))
 	.step('ralph', step('ralph'))
-	.step('commit', step('commit'));
+	.step('pr', step('pr'));

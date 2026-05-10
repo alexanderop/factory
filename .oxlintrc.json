@@ -94,7 +94,7 @@
   ],
   "overrides": [
     {
-      "files": ["packages/cli/src/**", "packages/core/src/**"],
+      "files": ["packages/cli/src/**", "packages/core/src/**", "scripts/**"],
       "rules": {
         "no-console": "off"
       }

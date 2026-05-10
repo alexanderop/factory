@@ -20,7 +20,8 @@
 		"aspire:down": "docker stop factory-aspire",
 		"aspire:logs": "docker logs -f factory-aspire",
 		"example": "pnpm --filter sdd-quickstart factory run sdd --prd ./feature.md",
-		"factory": "tsx packages/cli/src/main.ts"
+		"factory": "tsx packages/cli/src/main.ts",
+		"dogfood": "tsx scripts/dogfood.ts"
 	},
 	"dependencies": {
 		"@factory/core": "workspace:*",

@@ -1,76 +1,37 @@
 ---
 name: branch
-until: a ticket has status in-progress and the working branch matches it
+until: 'output contains: <promise>BRANCHED</promise>'
 maxIters: 1
 ---
 
-You are the branch step of an AFK factory. Your job is to pick the next
-ticket to work on and create a clean branch off `main` for it.
+You are the branch step of a factory pipeline. Your job is to create a
+clean branch off `main` for the work described in the plan.
 
-## Picking the ticket
+## Read the plan
 
-The PRD path is in the prompt above (and corresponds to a tickets folder
-at `plans/<name>/tickets/`). Find that folder and:
+The previous step wrote `$FACTORY_RUN_DIR/plan.md`. Read its frontmatter
+and use the `branch:` field verbatim as the branch name.
 
-1. **Resume case.** If exactly one ticket has frontmatter `status:
-in-progress`, pick that ticket. Do not flip its status. Do not
-   re-create its branch — checkout the existing one
-   (`fix/<id>` or `<type>/<id>`, see below) if it exists, otherwise
-   create it.
-2. **Fresh case.** Otherwise pick the ticket with `status: open` and the
-   lowest `priority` integer. Flip its frontmatter `status: open` →
-   `status: in-progress`, but **do not commit** — the working tree stays
-   dirty and the commit step bundles this with the production diff.
-3. **Nothing-to-do case.** If no ticket has `status: open` or
-   `in-progress`, output exactly:
+If `$FACTORY_RUN_DIR/plan.md` is missing or has no `branch:` field, that
+is a bug — stop and surface what you saw.
 
-   ```
-   <promise>NO-OPEN-TICKETS</promise>
-   ```
+## Pre-flight
 
-   …and stop. The orchestrator will treat this as success; the dogfood
-   skill polls for it to know the queue is empty.
+Run `git status --porcelain`. The working tree must be clean. If it is
+dirty, stop and surface the diff — do not stash, discard, or commit.
 
-If multiple tickets are `in-progress`, that's a bug — output the ids and
-stop with an error message.
+## Create the branch
 
-## Branch naming
+1. `git checkout main`. (No `git pull` — this is a local pipeline.)
+2. `git checkout -b <branch>` if the branch does not exist, otherwise
+   `git checkout <branch>` to resume on it.
 
-Derive a conventional-commit-style branch name from the ticket
-frontmatter:
+That's it. The branch is empty until ralph commits to it.
 
-- Default prefix is `fix/` for review-red tickets (the PRDs are bug
-  fixes). If the ticket title clearly matches another type, use that
-  prefix instead: `feat/`, `refactor/`, `test/`, `docs/`, `chore/`.
-- The slug after the prefix is the ticket `id` verbatim (already kebab-
-  case).
+## Signaling completion
 
-Examples:
-
-- `id: r3-harness-idle-timeout` → `fix/r3-harness-idle-timeout`
-- `id: typed-events-narrowing` → `refactor/typed-events-narrowing`
-
-## Branch creation
-
-The order matters because the picking step left the ticket file dirty:
-
-1. Pre-flight: `git status --porcelain`. The only modified path allowed
-   is the picked ticket file. Anything else dirty → stop and surface the
-   diff; do not stash or discard.
-2. `git checkout main`. (Do not `git pull` — this is a local dogfood
-   loop, not a tracked remote workflow.)
-3. `git checkout -b <branch-name>` (or `git checkout <branch-name>` if
-   the branch already exists from a prior resumed run). The dirty ticket
-   file follows you onto the new branch — that's intentional. Do not
-   commit it here.
-
-## Output
-
-End your message with the picked ticket id on its own line, in this
-exact form:
+End your final message with this exact token on its own line:
 
 ```
-<promise>PICKED <id></promise>
+<promise>BRANCHED</promise>
 ```
-
-Ralph reads this. Do not include any other `<promise>` markers.
