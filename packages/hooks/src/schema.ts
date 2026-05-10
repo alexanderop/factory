@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { HookId } from './ids.ts';
 
 // ── HookEvent ────────────────────────────────────────────────────────────────
 
@@ -60,3 +61,37 @@ export class ModifyDecision extends Schema.TaggedClass<ModifyDecision>()('Modify
 
 export const HookDecision = Schema.Union(AllowDecision, DenyDecision, AskDecision, ModifyDecision);
 export type HookDecision = typeof HookDecision.Type;
+
+// ── HookSpec ──────────────────────────────────────────────────────────────────
+
+const HookEventTag = Schema.Literal(
+	'preToolUse',
+	'postToolUse',
+	'sessionStart',
+	'stop',
+	'permissionRequest',
+);
+type HookEventTag = typeof HookEventTag.Type;
+
+/** Declarative rule — covers deny-paths, deny-commands, format-on-write, audit-log, and custom rules. */
+export class RuleSpec extends Schema.TaggedClass<RuleSpec>()('RuleSpec', {
+	id: HookId,
+	on: HookEventTag,
+	decide: Schema.Literal('allow', 'deny'),
+	pathPatterns: Schema.optional(Schema.Array(Schema.String)),
+	commandPatterns: Schema.optional(Schema.Array(Schema.String)),
+	matchTools: Schema.optional(Schema.Array(Schema.String)),
+	reason: Schema.optional(Schema.String),
+	formatRun: Schema.optional(Schema.String),
+	auditTo: Schema.optional(Schema.String),
+}) {}
+
+/** Effect-based escape hatch — handler is behaviour-shaped, validated by use. */
+export class EffectSpec extends Schema.TaggedClass<EffectSpec>()('EffectSpec', {
+	id: HookId,
+	on: HookEventTag,
+	handler: Schema.Any,
+}) {}
+
+export const HookSpec = Schema.Union(RuleSpec, EffectSpec);
+export type HookSpec = typeof HookSpec.Type;
