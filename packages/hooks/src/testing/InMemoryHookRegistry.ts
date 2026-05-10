@@ -4,10 +4,6 @@ import type { HookSpec } from '../schema.ts';
 import { HookRegistry } from '../services/HookRegistry.ts';
 
 export const InMemoryHookRegistry = {
-	layer: (specs: ReadonlyArray<HookSpec>): Layer.Layer<HookRegistry> => HookRegistry.layer(specs),
-
-	empty: (): Layer.Layer<HookRegistry> => HookRegistry.layer([]),
-
 	withSpec: (spec: HookSpec): Layer.Layer<HookRegistry> => {
 		const specsMap = new Map<string, HookSpec>([[spec.id, spec]]);
 		return Layer.succeed(HookRegistry, {

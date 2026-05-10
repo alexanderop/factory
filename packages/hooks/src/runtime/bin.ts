@@ -8,15 +8,14 @@ import { encodeDecision, runShim } from './shim.ts';
 const hookId = HookId.make(process.env['FACTORY_HOOK_ID'] ?? '');
 const harness = process.env['FACTORY_HOOK_HARNESS'] ?? 'unknown';
 
-const chunks: Uint8Array[] = [];
-for await (const chunk of process.stdin) {
-	if (chunk instanceof Uint8Array) {
-		chunks.push(chunk);
-	}
-}
-const stdinStream = Stream.fromIterable(chunks);
-
 const program = Effect.gen(function* () {
+	const stdinStream = yield* Effect.promise(async () => {
+		const chunks: Uint8Array[] = [];
+		for await (const chunk of process.stdin) {
+			if (chunk instanceof Uint8Array) chunks.push(chunk);
+		}
+		return Stream.fromIterable(chunks);
+	});
 	const decision = yield* runShim({ hookId, stdinStream });
 	const { json, exitCode } = encodeDecision(decision, harness);
 	process.stdout.write(json + '\n');

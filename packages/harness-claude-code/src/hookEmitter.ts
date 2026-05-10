@@ -27,15 +27,13 @@ export const claudeCodeHookEmitter: HookEmitterService = {
 			const grouped: Record<string, ClaudeHookEntry[]> = {};
 			for (const spec of specs) {
 				const eventKey = specToEvent(spec.on);
-				const entries: ClaudeHookEntry[] = grouped[eventKey] ?? [];
-				grouped[eventKey] = entries;
 				if (spec._tag === 'RuleSpec' && spec.decide === 'ask') {
 					yield* Effect.logWarning(
 						`[hooks] spec ${spec.id} uses 'ask' decide — claude-code supports prompt, emitting ask`,
 					);
 				}
 				const command = `factory-hook ${eventKey} --hook ${spec.id}`;
-				entries.push({ hooks: [{ type: 'command', command }] });
+				(grouped[eventKey] ??= []).push({ hooks: [{ type: 'command', command }] });
 			}
 
 			const settings = { hooks: grouped };

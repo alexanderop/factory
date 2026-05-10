@@ -73,10 +73,6 @@ id = "40f577fc9fb985c5"
 command = "factory-hook preToolUse --hook 40f577fc9fb985c5"
 decide = "deny"
 [[hooks.pre_tool_call]]
-id = "4be0f64433830c7f"
-command = "factory-hook preToolUse --hook 4be0f64433830c7f"
-decide = "allow"
-[[hooks.pre_tool_call]]
 id = "d7dba38067b2d143"
 command = "factory-hook preToolUse --hook d7dba38067b2d143"
 decide = "allow"

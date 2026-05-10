@@ -308,7 +308,7 @@ const hooksCompileCommand = Command.make(
 			Effect.provide(
 				HookCompiler.Default.pipe(
 					Layer.provide(handlerRegistry()),
-					Layer.provide(harnessEmitterLayer('claude-code')),
+					Layer.provide(harnessEmitterLayer(harness)),
 				),
 			),
 		),
@@ -329,7 +329,8 @@ const hooksCheckCommand = Command.make(
 			const event = yield* decodeHookEvent(eventJson).pipe(
 				Effect.mapError((e) => new Error(`invalid event JSON: ${e.message}`)),
 			);
-			const specs = yield* registry.byEvent(event._tag);
+			const eventOn = event._tag.charAt(0).toLowerCase() + event._tag.slice(1);
+			const specs = yield* registry.byEvent(eventOn);
 			if (specs.length === 0) {
 				console.log(`No hooks registered for event '${event._tag}'`);
 				return;

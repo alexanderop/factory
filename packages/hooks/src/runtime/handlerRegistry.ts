@@ -43,13 +43,4 @@ const loadSpecsEffect: Effect.Effect<ReadonlyArray<HookSpec>> = Effect.gen(funct
 
 /** Load .factory/hooks.ts from CWD and return a HookRegistry layer. */
 export const handlerRegistry = (): Layer.Layer<HookRegistry> =>
-	Layer.effect(
-		HookRegistry,
-		loadSpecsEffect.pipe(
-			Effect.map((specs) => ({
-				all: Effect.succeed(specs),
-				byId: (id: string) => Effect.succeed(specs.find((s) => s.id === id)),
-				byEvent: (event: string) => Effect.succeed(specs.filter((s) => s.on === event)),
-			})),
-		),
-	);
+	Layer.unwrapEffect(loadSpecsEffect.pipe(Effect.map((specs) => HookRegistry.layer(specs))));

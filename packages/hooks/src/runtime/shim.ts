@@ -2,7 +2,14 @@
 import { Effect, Match, Schema, Stream } from 'effect';
 import { HookRuntimeError } from '../errors.ts';
 import type { HookId } from '../ids.ts';
-import { AllowDecision, DenyDecision, HookDecision, HookEvent, type HookSpec } from '../schema.ts';
+import {
+	AllowDecision,
+	AskDecision,
+	DenyDecision,
+	HookDecision,
+	HookEvent,
+	type HookSpec,
+} from '../schema.ts';
 import { HookRegistry } from '../services/HookRegistry.ts';
 
 const decodeEvent = Schema.decodeUnknown(Schema.parseJson(HookEvent));
@@ -35,7 +42,7 @@ export const runShim = (
 					}),
 			),
 		);
-		const raw = Buffer.concat([...chunks].map((b) => Buffer.from(b))).toString('utf8');
+		const raw = Buffer.concat([...chunks]).toString('utf8');
 
 		const event = yield* decodeEvent(raw).pipe(
 			Effect.mapError(
@@ -72,7 +79,10 @@ export const runShim = (
 		return Match.value(spec.decide).pipe(
 			Match.when('deny', (): typeof HookDecision.Type => new DenyDecision({ reason: spec.reason })),
 			Match.when('allow', (): typeof HookDecision.Type => new AllowDecision({})),
-			Match.when('ask', (): typeof HookDecision.Type => new AllowDecision({})),
+			Match.when(
+				'ask',
+				(): typeof HookDecision.Type => new AskDecision({ prompt: spec.reason ?? 'Confirm?' }),
+			),
 			Match.exhaustive,
 		);
 	});

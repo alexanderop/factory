@@ -12,6 +12,12 @@ export const codexHookEmitter: HookEmitterService = {
 
 			const lines: string[] = ['[hooks]'];
 			for (const spec of specs) {
+				if (spec.on !== 'preToolUse') {
+					yield* Effect.logWarning(
+						`[hooks] spec ${spec.id} targets event '${spec.on}' — codex only supports preToolUse, skipping`,
+					);
+					continue;
+				}
 				let decide = spec._tag === 'RuleSpec' ? spec.decide : 'allow';
 				if (decide === 'ask') {
 					yield* Effect.logWarning(
