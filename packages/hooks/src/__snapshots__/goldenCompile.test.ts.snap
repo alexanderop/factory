@@ -1,0 +1,138 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`golden compile snapshots > claude-code emits expected settings.json 1`] = `
+{
+  "<runDir>/.hooks/claude-code/settings.json": "{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "factory-hook PreToolUse --hook d2d92e564557fcf0"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "factory-hook PreToolUse --hook 40f577fc9fb985c5"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "factory-hook PreToolUse --hook d7dba38067b2d143"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "factory-hook PreToolUse --hook 82bbed7eb02601cd"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "factory-hook PreToolUse --hook fe3d4f22fae94b22"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "factory-hook PostToolUse --hook 4be0f64433830c7f"
+          }
+        ]
+      }
+    ]
+  }
+}",
+}
+`;
+
+exports[`golden compile snapshots > codex emits expected config.toml 1`] = `
+{
+  "<runDir>/.hooks/codex/config.toml": "[hooks]
+[[hooks.pre_tool_call]]
+id = "d2d92e564557fcf0"
+command = "factory-hook preToolUse --hook d2d92e564557fcf0"
+decide = "deny"
+[[hooks.pre_tool_call]]
+id = "40f577fc9fb985c5"
+command = "factory-hook preToolUse --hook 40f577fc9fb985c5"
+decide = "deny"
+[[hooks.pre_tool_call]]
+id = "4be0f64433830c7f"
+command = "factory-hook preToolUse --hook 4be0f64433830c7f"
+decide = "allow"
+[[hooks.pre_tool_call]]
+id = "d7dba38067b2d143"
+command = "factory-hook preToolUse --hook d7dba38067b2d143"
+decide = "allow"
+[[hooks.pre_tool_call]]
+id = "82bbed7eb02601cd"
+command = "factory-hook preToolUse --hook 82bbed7eb02601cd"
+decide = "allow"
+[[hooks.pre_tool_call]]
+id = "fe3d4f22fae94b22"
+command = "factory-hook preToolUse --hook fe3d4f22fae94b22"
+decide = "allow"
+",
+}
+`;
+
+exports[`golden compile snapshots > copilot emits expected config.json 1`] = `
+{
+  "<runDir>/.hooks/copilot/config.json": "{
+  "hooks": [
+    {
+      "id": "d2d92e564557fcf0",
+      "event": "preToolUse",
+      "command": "factory-hook preToolUse --hook d2d92e564557fcf0",
+      "decide": "deny"
+    },
+    {
+      "id": "40f577fc9fb985c5",
+      "event": "preToolUse",
+      "command": "factory-hook preToolUse --hook 40f577fc9fb985c5",
+      "decide": "deny"
+    },
+    {
+      "id": "4be0f64433830c7f",
+      "event": "postToolUse",
+      "command": "factory-hook postToolUse --hook 4be0f64433830c7f",
+      "decide": "allow"
+    },
+    {
+      "id": "d7dba38067b2d143",
+      "event": "preToolUse",
+      "command": "factory-hook preToolUse --hook d7dba38067b2d143",
+      "decide": "allow"
+    },
+    {
+      "id": "82bbed7eb02601cd",
+      "event": "preToolUse",
+      "command": "factory-hook preToolUse --hook 82bbed7eb02601cd",
+      "decide": "allow"
+    },
+    {
+      "id": "fe3d4f22fae94b22",
+      "event": "preToolUse",
+      "command": "factory-hook preToolUse --hook fe3d4f22fae94b22",
+      "decide": "allow"
+    }
+  ]
+}",
+}
+`;

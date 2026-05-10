@@ -21,6 +21,9 @@
 		"effect": "^3.21.2"
 	},
 	"devDependencies": {
+		"@factory/harness-claude-code": "workspace:*",
+		"@factory/harness-codex": "workspace:*",
+		"@factory/harness-copilot": "workspace:*",
 		"@types/node": "^22.10.10",
 		"typescript": "^5.9.2"
 	}
