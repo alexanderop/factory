@@ -8,7 +8,11 @@ import { InMemoryHookRegistry } from '../testing/InMemoryHookRegistry.ts';
 import { runShim } from './shim.ts';
 
 const makeStdin = (event: PreToolUseEvent): Stream.Stream<Uint8Array> => {
-	const json = JSON.stringify({ _tag: event._tag, toolName: event.toolName, command: event.command });
+	const json = JSON.stringify({
+		_tag: event._tag,
+		toolName: event.toolName,
+		command: event.command,
+	});
 	return Stream.fromIterable([new TextEncoder().encode(json)]);
 };
 

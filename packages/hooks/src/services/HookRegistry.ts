@@ -16,8 +16,7 @@ export class HookRegistry extends Context.Tag('@factory/hooks/HookRegistry')<
 		return Layer.succeed(HookRegistry, {
 			all: Effect.succeed(specs),
 			byId: (id: HookId) => Effect.succeed(specs.find((s) => s.id === id)),
-			byEvent: (event: string) =>
-				Effect.succeed(specs.filter((s) => s.on === event)),
+			byEvent: (event: string) => Effect.succeed(specs.filter((s) => s.on === event)),
 		} satisfies HookRegistryService);
 	}
 

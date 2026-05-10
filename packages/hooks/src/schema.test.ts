@@ -1,7 +1,13 @@
 import { describe, it } from '@effect/vitest';
 import { deepStrictEqual } from '@effect/vitest/utils';
 import { Effect, Schema } from 'effect';
-import { AllowDecision, AskDecision, DenyDecision, HookDecision, ModifyDecision } from './schema.ts';
+import {
+	AllowDecision,
+	AskDecision,
+	DenyDecision,
+	HookDecision,
+	ModifyDecision,
+} from './schema.ts';
 
 describe('HookDecision round-trips', () => {
 	const decode = Schema.decodeUnknown(Schema.parseJson(HookDecision));

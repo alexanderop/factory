@@ -48,10 +48,8 @@ export const handlerRegistry = (): Layer.Layer<HookRegistry> =>
 		loadSpecsEffect.pipe(
 			Effect.map((specs) => ({
 				all: Effect.succeed(specs),
-				byId: (id: string) =>
-					Effect.succeed(specs.find((s) => s.id === id)),
-				byEvent: (event: string) =>
-					Effect.succeed(specs.filter((s) => s.on === event)),
+				byId: (id: string) => Effect.succeed(specs.find((s) => s.id === id)),
+				byEvent: (event: string) => Effect.succeed(specs.filter((s) => s.on === event)),
 			})),
 		),
 	);

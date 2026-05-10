@@ -155,9 +155,7 @@ const runCommand = Command.make(
 				? Effect.gen(function* () {
 						const compiler = yield* HookCompiler;
 						const runDir = path.join(cwd, '.factory');
-						return yield* compiler.compile({ harness, runDir }).pipe(
-							Effect.option,
-						);
+						return yield* compiler.compile({ harness, runDir }).pipe(Effect.option);
 					}).pipe(
 						Effect.provide(
 							HookCompiler.Default.pipe(
@@ -329,9 +327,7 @@ const hooksCheckCommand = Command.make(
 		Effect.gen(function* () {
 			const registry = yield* HookRegistry;
 			const event = yield* decodeHookEvent(eventJson).pipe(
-				Effect.mapError(
-					(e) => new Error(`invalid event JSON: ${e.message}`),
-				),
+				Effect.mapError((e) => new Error(`invalid event JSON: ${e.message}`)),
 			);
 			const specs = yield* registry.byEvent(event._tag);
 			if (specs.length === 0) {

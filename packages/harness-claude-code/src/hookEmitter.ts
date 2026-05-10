@@ -6,7 +6,6 @@ type ClaudeHookEntry = {
 	readonly hooks: ReadonlyArray<{ readonly type: 'command'; readonly command: string }>;
 };
 
-
 function specToEvent(on: string): string {
 	const map: Record<string, string> = {
 		preToolUse: 'PreToolUse',

@@ -2,19 +2,15 @@
 import { Effect, Match, Schema, Stream } from 'effect';
 import { HookRuntimeError } from '../errors.ts';
 import type { HookId } from '../ids.ts';
-import {
-	AllowDecision,
-	DenyDecision,
-	HookDecision,
-	HookEvent,
-	type HookSpec,
-} from '../schema.ts';
+import { AllowDecision, DenyDecision, HookDecision, HookEvent, type HookSpec } from '../schema.ts';
 import { HookRegistry } from '../services/HookRegistry.ts';
 
 const decodeEvent = Schema.decodeUnknown(Schema.parseJson(HookEvent));
 const encodeHookDecision = Schema.encodeSync(HookDecision);
 
-type EffectHandler = (event: typeof HookEvent.Type) => Effect.Effect<typeof HookDecision.Type, HookRuntimeError>;
+type EffectHandler = (
+	event: typeof HookEvent.Type,
+) => Effect.Effect<typeof HookDecision.Type, HookRuntimeError>;
 
 const isEffectHandler = (v: unknown): v is EffectHandler => typeof v === 'function';
 
@@ -39,9 +35,7 @@ export const runShim = (
 					}),
 			),
 		);
-		const raw = Buffer.concat(
-			[...chunks].map((b) => Buffer.from(b)),
-		).toString('utf8');
+		const raw = Buffer.concat([...chunks].map((b) => Buffer.from(b))).toString('utf8');
 
 		const event = yield* decodeEvent(raw).pipe(
 			Effect.mapError(

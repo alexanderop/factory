@@ -2,12 +2,12 @@
 	"name": "@factory/hooks",
 	"version": "0.0.0",
 	"private": true,
+	"bin": {
+		"factory-hook": "./src/runtime/bin.ts"
+	},
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
-	},
-	"bin": {
-		"factory-hook": "./src/runtime/bin.ts"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.json",

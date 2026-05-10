@@ -15,7 +15,11 @@ export interface CompileOptions {
 export interface HookCompilerService {
 	readonly compile: (
 		opts: CompileOptions,
-	) => Effect.Effect<EmittedConfig, HookCompileError | HookConfigError, FileSystem.FileSystem | Path.Path>;
+	) => Effect.Effect<
+		EmittedConfig,
+		HookCompileError | HookConfigError,
+		FileSystem.FileSystem | Path.Path
+	>;
 }
 
 const checkCodexHooksFlag = Effect.gen(function* () {
@@ -25,9 +29,9 @@ const checkCodexHooksFlag = Effect.gen(function* () {
 	for (const candidate of candidates) {
 		const exists = yield* fs.exists(candidate);
 		if (exists) {
-			const content = yield* fs.readFileString(candidate).pipe(
-				Effect.catchAll(() => Effect.succeed('')),
-			);
+			const content = yield* fs
+				.readFileString(candidate)
+				.pipe(Effect.catchAll(() => Effect.succeed('')));
 			if (content.includes('codex_hooks = true')) {
 				return;
 			}

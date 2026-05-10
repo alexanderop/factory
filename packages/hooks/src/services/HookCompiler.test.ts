@@ -39,10 +39,7 @@ const AppLayer = (harness: string) => {
 		HookRegistry.layer(specs),
 		Layer.succeed(HookEmitter, makeTestEmitter(harness)),
 	);
-	return Layer.mergeAll(
-		HookCompiler.Default.pipe(Layer.provide(deps)),
-		NodeContext.layer,
-	);
+	return Layer.mergeAll(HookCompiler.Default.pipe(Layer.provide(deps)), NodeContext.layer);
 };
 
 describe('HookCompiler', () => {

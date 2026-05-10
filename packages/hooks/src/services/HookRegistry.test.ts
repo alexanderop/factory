@@ -17,9 +17,7 @@ describe('HookRegistry', () => {
 			const registry = yield* HookRegistry;
 			const all = yield* registry.all;
 			strictEqual(all.length, 3);
-		}).pipe(
-			Effect.provide(HookRegistry.layer([denyPathsSpec, effectSpec, stopSpec])),
-		),
+		}).pipe(Effect.provide(HookRegistry.layer([denyPathsSpec, effectSpec, stopSpec]))),
 	);
 
 	it.effect('byId returns the matching spec', () =>
@@ -27,9 +25,7 @@ describe('HookRegistry', () => {
 			const registry = yield* HookRegistry;
 			const found = yield* registry.byId(denyPathsSpec.id);
 			deepStrictEqual(found?._tag, 'RuleSpec');
-		}).pipe(
-			Effect.provide(HookRegistry.layer([denyPathsSpec, effectSpec])),
-		),
+		}).pipe(Effect.provide(HookRegistry.layer([denyPathsSpec, effectSpec]))),
 	);
 
 	it.effect('byEvent returns specs for matching event type', () =>
@@ -39,9 +35,7 @@ describe('HookRegistry', () => {
 			strictEqual(preSpecs.length, 2);
 			const stopSpecs = yield* registry.byEvent('stop');
 			strictEqual(stopSpecs.length, 1);
-		}).pipe(
-			Effect.provide(HookRegistry.layer([denyPathsSpec, effectSpec, stopSpec])),
-		),
+		}).pipe(Effect.provide(HookRegistry.layer([denyPathsSpec, effectSpec, stopSpec]))),
 	);
 
 	it.effect('byEvent returns empty array when no specs match', () =>
@@ -49,9 +43,7 @@ describe('HookRegistry', () => {
 			const registry = yield* HookRegistry;
 			const sessionSpecs = yield* registry.byEvent('sessionStart');
 			strictEqual(sessionSpecs.length, 0);
-		}).pipe(
-			Effect.provide(HookRegistry.layer([denyPathsSpec])),
-		),
+		}).pipe(Effect.provide(HookRegistry.layer([denyPathsSpec]))),
 	);
 
 	it.effect('HookRegistry.Test layer works as a test double', () =>
