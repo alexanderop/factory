@@ -77,7 +77,7 @@ type HookEventTag = typeof HookEventTag.Type;
 export class RuleSpec extends Schema.TaggedClass<RuleSpec>()('RuleSpec', {
 	id: HookId,
 	on: HookEventTag,
-	decide: Schema.Literal('allow', 'deny'),
+	decide: Schema.Literal('allow', 'deny', 'ask'),
 	pathPatterns: Schema.optional(Schema.Array(Schema.String)),
 	commandPatterns: Schema.optional(Schema.Array(Schema.String)),
 	matchTools: Schema.optional(Schema.Array(Schema.String)),

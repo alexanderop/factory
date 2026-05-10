@@ -20,7 +20,8 @@ function stableId(fields: Record<string, unknown>): HookId {
 
 export interface RuleOptions {
 	readonly on: HookEventTag;
-	readonly decide: 'allow' | 'deny';
+	readonly decide: 'allow' | 'deny' | 'ask';
+	readonly askPrompt?: string;
 	readonly matchTools?: ReadonlyArray<string>;
 	readonly reason?: string;
 	readonly pathPatterns?: ReadonlyArray<string>;

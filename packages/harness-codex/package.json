@@ -11,7 +11,11 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@factory/core": "workspace:*"
+		"@effect/platform": "^0.96.1",
+		"@effect/platform-node": "^0.106.0",
+		"@factory/core": "workspace:*",
+		"@factory/hooks": "workspace:*",
+		"effect": "^3.21.2"
 	},
 	"devDependencies": {
 		"typescript": "^5.9.2"
