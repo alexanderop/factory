@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import {
-	applyInitialColorMode,
-	COLOR_MODE_STORAGE_KEY,
-	toggleColorMode,
-} from './colorMode';
+import { applyInitialColorMode, COLOR_MODE_STORAGE_KEY, toggleColorMode } from './colorMode.ts';
 
 applyInitialColorMode({
 	prefersDark: () =>
@@ -137,9 +133,7 @@ function clearCompleted() {
 								@click="remove(todo)"
 							/>
 						</li>
-						<li v-if="filtered.length === 0" class="py-8 text-center text-dimmed">
-							Nothing here.
-						</li>
+						<li v-if="filtered.length === 0" class="py-8 text-center text-dimmed">Nothing here.</li>
 					</ul>
 
 					<div v-if="todos.some((t) => t.done)" class="mt-4 flex justify-end">

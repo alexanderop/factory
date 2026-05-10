@@ -22,7 +22,7 @@ jobs:
     env:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      OTEL_SDK_DISABLED: "true"
+      OTEL_SDK_DISABLED: 'true'
 
     steps:
       - uses: actions/checkout@v4

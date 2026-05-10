@@ -14,6 +14,8 @@
 		"format:check": "oxfmt --check",
 		"test": "vitest run",
 		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"test:coverage:watch": "vitest --coverage",
 		"docs:dev": "pnpm --filter @factory/docs dev",
 		"docs:build": "pnpm --filter @factory/docs build",
 		"aspire:up": "docker run -d --rm --name factory-aspire -p 18888:18888 -p 4317:18889 -e DASHBOARD__OTLP__AUTHMODE=Unsecured -e DASHBOARD__FRONTEND__AUTHMODE=Unsecured mcr.microsoft.com/dotnet/aspire-dashboard:9.0 && echo 'Aspire Dashboard → http://localhost:18888'",
@@ -34,6 +36,7 @@
 	"devDependencies": {
 		"@effect/vitest": "^0.29.0",
 		"@types/node": "^22.10.10",
+		"@vitest/coverage-v8": "^4.1.5",
 		"effect": "^3.21.2",
 		"lefthook": "^2.1.6",
 		"oxfmt": "^0.48.0",
