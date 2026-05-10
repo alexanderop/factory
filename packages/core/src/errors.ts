@@ -31,7 +31,16 @@ export class HarnessSpawnError extends Data.TaggedError('HarnessSpawnError')<{
 	readonly bin: string;
 }> {}
 
-/** Harness produced no output for `idleTimeoutMs` and was killed. */
+/** Harness produced no output for `idleTimeoutMs` and was killed. Raised at the
+ * harness boundary, before the orchestrator has attached the running step. */
+export class HarnessIdleTimeoutError extends Data.TaggedError('HarnessIdleTimeoutError')<{
+	readonly message: string;
+	readonly harness: HarnessName;
+	readonly idleMs: number;
+}> {}
+
+/** Harness produced no output for `idleTimeoutMs` and was killed. Carries the
+ * branded step id; produced by the orchestrator from `HarnessIdleTimeoutError`. */
 export class StepIdleTimeoutError extends Data.TaggedError('StepIdleTimeoutError')<{
 	readonly message: string;
 	readonly step: StepId;
@@ -103,6 +112,7 @@ export type FactoryError =
 	| HarnessNotFoundError
 	| HarnessExecError
 	| HarnessSpawnError
+	| HarnessIdleTimeoutError
 	| StepIdleTimeoutError
 	| StepMaxItersError
 	| UntilEvalError

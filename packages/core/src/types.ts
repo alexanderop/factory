@@ -5,8 +5,8 @@ import { StepRequirements } from './capabilities.ts';
 import type {
 	FactoryError,
 	HarnessExecError,
+	HarnessIdleTimeoutError,
 	HarnessSpawnError,
-	StepIdleTimeoutError,
 } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
 import type { PipelineName, RunId } from './ids.ts';
@@ -73,14 +73,14 @@ export interface Harness<Name extends string = string> {
 		opts: ExecOpts,
 	) => Effect.Effect<
 		ExecResult,
-		HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
+		HarnessExecError | HarnessSpawnError | HarnessIdleTimeoutError,
 		HarnessExecRequirements
 	>;
 	readonly stream: (
 		opts: ExecOpts,
 	) => Stream.Stream<
 		HarnessEvent,
-		HarnessSpawnError | StepIdleTimeoutError,
+		HarnessSpawnError | HarnessIdleTimeoutError,
 		HarnessExecRequirements
 	>;
 }

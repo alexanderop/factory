@@ -234,198 +234,203 @@ const streamHarnessIter = ({
 			);
 
 		yield* annotateExitReasonOnError(
-			Stream.runForEach(harness.stream(optsWithEnv), (event) =>
-				Effect.gen(function* () {
-					switch (event.type) {
-						case 'stdout': {
-							stdoutLines.push(event.line);
-							bytesStdout += Buffer.byteLength(event.line, 'utf8') + 1;
-							yield* workspace.appendStdout(stepOrd, n, `${event.line}\n`);
-							yield* display.harnessLine(stepId, 'stdout', event.line);
-							return;
-						}
-						case 'stderr': {
-							stderrLines.push(event.line);
-							bytesStderr += Buffer.byteLength(event.line, 'utf8') + 1;
-							yield* workspace.appendStderr(stepOrd, n, `${event.line}\n`);
-							yield* display.harnessLine(stepId, 'stderr', event.line);
-							return;
-						}
-						case 'exit': {
-							exitCode = event.code;
-							return;
-						}
-						case 'assistant.message': {
-							stdoutLines.push(event.text);
-							bytesStdout += Buffer.byteLength(event.text, 'utf8') + 1;
-							assistantMessageCount += 1;
-							yield* workspace.appendStdout(stepOrd, n, `${event.text}\n`);
-							yield* display.harnessLine(stepId, 'stdout', event.text);
-							yield* Metric.increment(assistantMessagesTotal);
-							const ts = yield* Clock.currentTimeMillis;
-							eventOnIter('assistant.message', BigInt(ts) * 1_000_000n, {
-								bytes: Buffer.byteLength(event.text, 'utf8'),
-							});
-							yield* persistAndEmit({
-								type: 'assistant.message',
-								runId,
-								step: stepId,
-								iter: n,
-								text: event.text,
-							});
-							return;
-						}
-						case 'tool.start': {
-							const { summary: inputSummary, bytes: inputBytes } = describeForSpan(event.input);
-							const span = yield* Effect.makeSpan(`factory.harness.tool ${event.name}`, {
-								attributes: {
-									'tool.name': event.name,
-									'tool.id': event.id,
-									'tool.input.summary': inputSummary,
-									'tool.input.bytes': inputBytes,
-									'factory.run.id': runId,
-									'factory.step': stepId,
-									'factory.iter': n,
-									...toolInputAttributes(event.name, event.input),
-								},
-							});
-							const startedAt = yield* Clock.currentTimeMillis;
-							toolSpans.set(event.id, { span, name: event.name, startedAt });
-							toolCalls += 1;
-							eventOnIter('tool.start', BigInt(startedAt) * 1_000_000n, {
-								'tool.id': event.id,
-								'tool.name': event.name,
-							});
-							yield* persistAndEmit({
-								type: 'tool.start',
-								runId,
-								step: stepId,
-								iter: n,
-								toolCallId: event.id,
-								tool: event.name,
-								inputSummary,
-								inputBytes,
-							});
-							return;
-						}
-						case 'tool.end': {
-							const entry = toolSpans.get(event.id);
-							if (!entry) {
-								yield* Effect.logWarning(
-									`tool.end for unknown tool id ${event.id} (parser desync?)`,
-								);
-								return;
-							}
-							const endedAt = yield* Clock.currentTimeMillis;
-							const durationMs = endedAt - entry.startedAt;
-							const { summary: outputSummary, bytes: outputBytes } = describeForSpan(event.output);
-							entry.span.attribute('tool.ok', event.ok);
-							entry.span.attribute('tool.output.summary', outputSummary);
-							entry.span.attribute('tool.output.bytes', outputBytes);
-							entry.span.attribute('tool.duration_ms', durationMs);
-							const outputAttrs = toolOutputAttributes(entry.name, event.output, event.ok);
-							for (const [key, value] of Object.entries(outputAttrs)) {
-								entry.span.attribute(key, value);
-							}
-							entry.span.end(
-								BigInt(endedAt) * 1_000_000n,
-								event.ok ? Exit.void : Exit.fail(new Error('tool errored')),
-							);
-							toolSpans.delete(event.id);
-							if (!event.ok) toolCallsFailed += 1;
-							yield* Metric.increment(toolCallsTotal).pipe(
-								Effect.tagMetrics('tool', entry.name),
-								Effect.tagMetrics('ok', event.ok ? 'true' : 'false'),
-							);
-							yield* Metric.update(toolCallDurationMs, durationMs).pipe(
-								Effect.tagMetrics('tool', entry.name),
-							);
-							eventOnIter('tool.end', BigInt(endedAt) * 1_000_000n, {
-								'tool.id': event.id,
-								'tool.name': entry.name,
-								'tool.ok': event.ok,
-							});
-							yield* persistAndEmit({
-								type: 'tool.end',
-								runId,
-								step: stepId,
-								iter: n,
-								toolCallId: event.id,
-								tool: entry.name,
-								ok: event.ok,
-								outputSummary,
-								outputBytes,
-								durationMs,
-							});
-							return;
-						}
-						case 'result': {
-							resultEventCount += 1;
-							const tokensInput = event.tokens?.input ?? 0;
-							const tokensOutput = event.tokens?.output ?? 0;
-							const tokensCacheRead = event.tokens?.cacheRead ?? 0;
-							const tokensCacheCreate = event.tokens?.cacheCreate ?? 0;
-							annotateIter('factory.iter.cost_usd', event.costUsd ?? 0);
-							annotateIter('factory.iter.tokens.input', tokensInput);
-							annotateIter('factory.iter.tokens.output', tokensOutput);
-							annotateIter('factory.iter.tokens.cache_read', tokensCacheRead);
-							annotateIter('factory.iter.tokens.cache_create', tokensCacheCreate);
-							annotateIter('factory.iter.harness_duration_ms', event.durationMs);
-							annotateIter('factory.iter.model', event.model ?? '');
-							annotateIter('factory.iter.ok', event.ok);
-							annotateIter('gen_ai.system', harness.name);
-							if (event.model) annotateIter('gen_ai.request.model', event.model);
-							annotateIter('gen_ai.usage.input_tokens', tokensInput);
-							annotateIter('gen_ai.usage.output_tokens', tokensOutput);
-							annotateIter('gen_ai.usage.cache_read_input_tokens', tokensCacheRead);
-							annotateIter('gen_ai.usage.cache_creation_input_tokens', tokensCacheCreate);
-							annotateIter('gen_ai.response.finish_reasons', [event.ok ? 'stop' : 'error']);
-							const model = event.model ?? '';
-							const tokensIncrement = (kind: string, amount: number) =>
-								Metric.incrementBy(tokensTotal, amount).pipe(
-									Effect.tagMetrics('kind', kind),
-									Effect.tagMetrics('model', model),
-								);
-							if (event.tokens) {
-								yield* tokensIncrement('input', event.tokens.input);
-								yield* tokensIncrement('output', event.tokens.output);
-								if (event.tokens.cacheRead !== undefined) {
-									yield* tokensIncrement('cache_read', event.tokens.cacheRead);
-								}
-								if (event.tokens.cacheCreate !== undefined) {
-									yield* tokensIncrement('cache_create', event.tokens.cacheCreate);
-								}
-							}
-							if (event.costUsd !== undefined && event.costUsd > 0) {
-								yield* Metric.incrementBy(costMicroUsd, Math.round(event.costUsd * 1_000_000)).pipe(
-									Effect.tagMetrics('model', model),
-								);
-							}
-							yield* persistAndEmit({
-								type: 'iter.result',
-								runId,
-								step: stepId,
-								iter: n,
-								ok: event.ok,
-								costUsd: event.costUsd,
-								tokens: event.tokens,
-								model: event.model,
-								durationMs: event.durationMs,
-							});
-							return;
-						}
-					}
-				}),
-			).pipe(
-				Effect.mapError((e) =>
-					e._tag === 'StepIdleTimeoutError'
-						? new StepIdleTimeoutError({
+			Stream.runForEach(
+				harness.stream(optsWithEnv).pipe(
+					Stream.catchTag('HarnessIdleTimeoutError', (e) =>
+						Stream.fail(
+							new StepIdleTimeoutError({
 								message: e.message,
 								step: stepId,
-								timeoutMs: e.timeoutMs,
-							})
-						: e,
+								timeoutMs: e.idleMs,
+							}),
+						),
+					),
 				),
+				(event) =>
+					Effect.gen(function* () {
+						switch (event.type) {
+							case 'stdout': {
+								stdoutLines.push(event.line);
+								bytesStdout += Buffer.byteLength(event.line, 'utf8') + 1;
+								yield* workspace.appendStdout(stepOrd, n, `${event.line}\n`);
+								yield* display.harnessLine(stepId, 'stdout', event.line);
+								return;
+							}
+							case 'stderr': {
+								stderrLines.push(event.line);
+								bytesStderr += Buffer.byteLength(event.line, 'utf8') + 1;
+								yield* workspace.appendStderr(stepOrd, n, `${event.line}\n`);
+								yield* display.harnessLine(stepId, 'stderr', event.line);
+								return;
+							}
+							case 'exit': {
+								exitCode = event.code;
+								return;
+							}
+							case 'assistant.message': {
+								stdoutLines.push(event.text);
+								bytesStdout += Buffer.byteLength(event.text, 'utf8') + 1;
+								assistantMessageCount += 1;
+								yield* workspace.appendStdout(stepOrd, n, `${event.text}\n`);
+								yield* display.harnessLine(stepId, 'stdout', event.text);
+								yield* Metric.increment(assistantMessagesTotal);
+								const ts = yield* Clock.currentTimeMillis;
+								eventOnIter('assistant.message', BigInt(ts) * 1_000_000n, {
+									bytes: Buffer.byteLength(event.text, 'utf8'),
+								});
+								yield* persistAndEmit({
+									type: 'assistant.message',
+									runId,
+									step: stepId,
+									iter: n,
+									text: event.text,
+								});
+								return;
+							}
+							case 'tool.start': {
+								const { summary: inputSummary, bytes: inputBytes } = describeForSpan(event.input);
+								const span = yield* Effect.makeSpan(`factory.harness.tool ${event.name}`, {
+									attributes: {
+										'tool.name': event.name,
+										'tool.id': event.id,
+										'tool.input.summary': inputSummary,
+										'tool.input.bytes': inputBytes,
+										'factory.run.id': runId,
+										'factory.step': stepId,
+										'factory.iter': n,
+										...toolInputAttributes(event.name, event.input),
+									},
+								});
+								const startedAt = yield* Clock.currentTimeMillis;
+								toolSpans.set(event.id, { span, name: event.name, startedAt });
+								toolCalls += 1;
+								eventOnIter('tool.start', BigInt(startedAt) * 1_000_000n, {
+									'tool.id': event.id,
+									'tool.name': event.name,
+								});
+								yield* persistAndEmit({
+									type: 'tool.start',
+									runId,
+									step: stepId,
+									iter: n,
+									toolCallId: event.id,
+									tool: event.name,
+									inputSummary,
+									inputBytes,
+								});
+								return;
+							}
+							case 'tool.end': {
+								const entry = toolSpans.get(event.id);
+								if (!entry) {
+									yield* Effect.logWarning(
+										`tool.end for unknown tool id ${event.id} (parser desync?)`,
+									);
+									return;
+								}
+								const endedAt = yield* Clock.currentTimeMillis;
+								const durationMs = endedAt - entry.startedAt;
+								const { summary: outputSummary, bytes: outputBytes } = describeForSpan(
+									event.output,
+								);
+								entry.span.attribute('tool.ok', event.ok);
+								entry.span.attribute('tool.output.summary', outputSummary);
+								entry.span.attribute('tool.output.bytes', outputBytes);
+								entry.span.attribute('tool.duration_ms', durationMs);
+								const outputAttrs = toolOutputAttributes(entry.name, event.output, event.ok);
+								for (const [key, value] of Object.entries(outputAttrs)) {
+									entry.span.attribute(key, value);
+								}
+								entry.span.end(
+									BigInt(endedAt) * 1_000_000n,
+									event.ok ? Exit.void : Exit.fail(new Error('tool errored')),
+								);
+								toolSpans.delete(event.id);
+								if (!event.ok) toolCallsFailed += 1;
+								yield* Metric.increment(toolCallsTotal).pipe(
+									Effect.tagMetrics('tool', entry.name),
+									Effect.tagMetrics('ok', event.ok ? 'true' : 'false'),
+								);
+								yield* Metric.update(toolCallDurationMs, durationMs).pipe(
+									Effect.tagMetrics('tool', entry.name),
+								);
+								eventOnIter('tool.end', BigInt(endedAt) * 1_000_000n, {
+									'tool.id': event.id,
+									'tool.name': entry.name,
+									'tool.ok': event.ok,
+								});
+								yield* persistAndEmit({
+									type: 'tool.end',
+									runId,
+									step: stepId,
+									iter: n,
+									toolCallId: event.id,
+									tool: entry.name,
+									ok: event.ok,
+									outputSummary,
+									outputBytes,
+									durationMs,
+								});
+								return;
+							}
+							case 'result': {
+								resultEventCount += 1;
+								const tokensInput = event.tokens?.input ?? 0;
+								const tokensOutput = event.tokens?.output ?? 0;
+								const tokensCacheRead = event.tokens?.cacheRead ?? 0;
+								const tokensCacheCreate = event.tokens?.cacheCreate ?? 0;
+								annotateIter('factory.iter.cost_usd', event.costUsd ?? 0);
+								annotateIter('factory.iter.tokens.input', tokensInput);
+								annotateIter('factory.iter.tokens.output', tokensOutput);
+								annotateIter('factory.iter.tokens.cache_read', tokensCacheRead);
+								annotateIter('factory.iter.tokens.cache_create', tokensCacheCreate);
+								annotateIter('factory.iter.harness_duration_ms', event.durationMs);
+								annotateIter('factory.iter.model', event.model ?? '');
+								annotateIter('factory.iter.ok', event.ok);
+								annotateIter('gen_ai.system', harness.name);
+								if (event.model) annotateIter('gen_ai.request.model', event.model);
+								annotateIter('gen_ai.usage.input_tokens', tokensInput);
+								annotateIter('gen_ai.usage.output_tokens', tokensOutput);
+								annotateIter('gen_ai.usage.cache_read_input_tokens', tokensCacheRead);
+								annotateIter('gen_ai.usage.cache_creation_input_tokens', tokensCacheCreate);
+								annotateIter('gen_ai.response.finish_reasons', [event.ok ? 'stop' : 'error']);
+								const model = event.model ?? '';
+								const tokensIncrement = (kind: string, amount: number) =>
+									Metric.incrementBy(tokensTotal, amount).pipe(
+										Effect.tagMetrics('kind', kind),
+										Effect.tagMetrics('model', model),
+									);
+								if (event.tokens) {
+									yield* tokensIncrement('input', event.tokens.input);
+									yield* tokensIncrement('output', event.tokens.output);
+									if (event.tokens.cacheRead !== undefined) {
+										yield* tokensIncrement('cache_read', event.tokens.cacheRead);
+									}
+									if (event.tokens.cacheCreate !== undefined) {
+										yield* tokensIncrement('cache_create', event.tokens.cacheCreate);
+									}
+								}
+								if (event.costUsd !== undefined && event.costUsd > 0) {
+									yield* Metric.incrementBy(
+										costMicroUsd,
+										Math.round(event.costUsd * 1_000_000),
+									).pipe(Effect.tagMetrics('model', model));
+								}
+								yield* persistAndEmit({
+									type: 'iter.result',
+									runId,
+									step: stepId,
+									iter: n,
+									ok: event.ok,
+									costUsd: event.costUsd,
+									tokens: event.tokens,
+									model: event.model,
+									durationMs: event.durationMs,
+								});
+								return;
+							}
+						}
+					}),
 			),
 		);
 

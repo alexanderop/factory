@@ -2,8 +2,8 @@ import { Command, type CommandExecutor } from '@effect/platform';
 import { Duration, Effect, Metric, Stream } from 'effect';
 import { harnessSpawnsTotal } from './metrics.ts';
 import type { HarnessCapabilities } from './capabilities.ts';
-import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
-import { HarnessName, StepId } from './ids.ts';
+import { HarnessExecError, HarnessIdleTimeoutError, HarnessSpawnError } from './errors.ts';
+import { HarnessName } from './ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from './types.ts';
 
 export interface SubprocessHarnessConfig<Name extends string, P extends PermissionMode> {
@@ -82,7 +82,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		opts: ExecOpts,
 	): Stream.Stream<
 		HarnessEvent,
-		HarnessSpawnError | StepIdleTimeoutError,
+		HarnessSpawnError | HarnessIdleTimeoutError,
 		CommandExecutor.CommandExecutor
 	> => {
 		const events: Stream.Stream<HarnessEvent, HarnessSpawnError, CommandExecutor.CommandExecutor> =
@@ -130,10 +130,10 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 				? events.pipe(
 						Stream.timeoutFail(
 							() =>
-								new StepIdleTimeoutError({
+								new HarnessIdleTimeoutError({
 									message: `harness '${config.name}' produced no output for ${opts.idleTimeoutMs}ms`,
-									step: StepId.make(''),
-									timeoutMs: opts.idleTimeoutMs ?? 0,
+									harness: harnessName,
+									idleMs: opts.idleTimeoutMs ?? 0,
 								}),
 							Duration.millis(opts.idleTimeoutMs),
 						),
@@ -154,7 +154,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		opts: ExecOpts,
 	): Effect.Effect<
 		ExecResult,
-		HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
+		HarnessExecError | HarnessSpawnError | HarnessIdleTimeoutError,
 		CommandExecutor.CommandExecutor
 	> =>
 		Effect.gen(function* () {

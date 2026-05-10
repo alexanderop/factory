@@ -1,10 +1,15 @@
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertInstanceOf, assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Layer, Ref } from 'effect';
+import { Cause, Effect, Exit, Layer, Ref, Stream } from 'effect';
 import { CapabilityMismatchError, type HarnessCapabilities } from './capabilities.ts';
-import { StepMaxItersError, UnsupportedPermissionError } from './errors.ts';
-import { RunId } from './ids.ts';
+import {
+	HarnessIdleTimeoutError,
+	StepIdleTimeoutError,
+	StepMaxItersError,
+	UnsupportedPermissionError,
+} from './errors.ts';
+import { HarnessName, RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
 import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
 import {
@@ -16,7 +21,7 @@ import {
 	scriptedUntilEvaluator,
 	SilentDisplay,
 } from './testing/index.ts';
-import type { ExecOpts, FactoryEvent, PermissionMode } from './types.ts';
+import type { ExecOpts, FactoryEvent, Harness, PermissionMode } from './types.ts';
 
 const fakeHarness = scriptedHarness('claude-code', [
 	{ stdout: 'iter-1-output\n' },
@@ -395,6 +400,70 @@ Iterate until done.`,
 			}),
 		);
 	});
+
+	it.effect(
+		'maps HarnessIdleTimeoutError to StepIdleTimeoutError carrying the running step brand',
+		() =>
+			Effect.gen(function* () {
+				const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
+				const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
+
+				const fullCaps: HarnessCapabilities = {
+					loadSession: false,
+					mcp: { http: false, sse: false },
+					prompt: { image: false, audio: false, embeddedContext: false },
+					session: { list: false, resume: false, close: false },
+					factory: {
+						permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
+						toolEvents: false,
+					},
+				};
+				const idleHarness: Harness<'claude-code'> = {
+					name: 'claude-code',
+					capabilities: fullCaps,
+					exec: () =>
+						Effect.fail(
+							new HarnessIdleTimeoutError({
+								message: "harness 'claude-code' produced no output for 5000ms",
+								harness: HarnessName.make('claude-code'),
+								idleMs: 5000,
+							}),
+						),
+					stream: () =>
+						Stream.fail(
+							new HarnessIdleTimeoutError({
+								message: "harness 'claude-code' produced no output for 5000ms",
+								harness: HarnessName.make('claude-code'),
+								idleMs: 5000,
+							}),
+						),
+				};
+
+				const layer = Layer.mergeAll(
+					SilentDisplay.layer(displayRef),
+					recordingEventEmitter.layer(eventsRef),
+					harnessRegistryLayer([idleHarness]),
+					InMemoryStepLoader.layer(new Map([['./steps/only.md', `---\nname: only\n---\nDo it.`]])),
+					scriptedUntilEvaluator.layer([true]),
+					InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
+				).pipe(Layer.provideMerge(NodeContext.layer));
+
+				const exit = yield* Effect.exit(
+					runFactoryEffect(
+						{ name: 'sdd', harness: 'claude-code' },
+						[{ id: 'only', source: './steps/only.md', options: {} }],
+						{ prd: 'inline PRD', cwd: process.cwd() },
+					).pipe(Effect.provide(layer)),
+				);
+
+				assertTrue(Exit.isFailure(exit));
+				const failure = Cause.failureOption(exit.cause);
+				assertTrue(failure._tag === 'Some');
+				assertInstanceOf(failure.value, StepIdleTimeoutError);
+				strictEqual(failure.value.step, 'only');
+				strictEqual(failure.value.timeoutMs, 5000);
+			}),
+	);
 
 	it.effect('fails with StepMaxItersError when until never holds', () =>
 		Effect.gen(function* () {
