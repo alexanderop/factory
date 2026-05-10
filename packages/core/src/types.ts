@@ -180,7 +180,7 @@ export type FactoryEvent =
 			readonly type: 'error';
 			readonly runId: RunId;
 			readonly step?: StepId;
-			readonly error: unknown;
+			readonly error: FactoryError;
 	  };
 
 export interface FactoryOptions<Names extends string = string> {
