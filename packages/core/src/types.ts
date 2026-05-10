@@ -105,14 +105,14 @@ export interface Harness<Name extends string = string> {
 		opts: ExecOpts,
 	) => Effect.Effect<
 		ExecResult,
-		HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
+		HarnessAuthError | HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
 		HarnessExecRequirements
 	>;
 	readonly stream: (
 		opts: ExecOpts,
 	) => Stream.Stream<
 		HarnessEvent,
-		HarnessSpawnError | StepIdleTimeoutError,
+		HarnessAuthError | HarnessSpawnError | StepIdleTimeoutError,
 		HarnessExecRequirements
 	>;
 }

@@ -1,10 +1,18 @@
 import { Command, type CommandExecutor } from '@effect/platform';
-import { Duration, Effect, Metric, Stream } from 'effect';
+import { Duration, Effect, Metric, Redacted, Stream } from 'effect';
 import { harnessSpawnsTotal } from './metrics.ts';
 import type { HarnessCapabilities } from './capabilities.ts';
-import { HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
+import { HarnessAuthError, HarnessExecError, HarnessSpawnError, StepIdleTimeoutError } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
-import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from './types.ts';
+import type {
+	ExecOpts,
+	ExecResult,
+	Harness,
+	HarnessAuth,
+	HarnessAuthSpec,
+	HarnessEvent,
+	PermissionMode,
+} from './types.ts';
 
 export interface SubprocessHarnessConfig<Name extends string, P extends PermissionMode> {
 	readonly name: Name;
@@ -26,6 +34,7 @@ export interface SubprocessHarnessConfig<Name extends string, P extends Permissi
 	 * `CLAUDE_CODE_ENABLE_TELEMETRY=1`).
 	 */
 	readonly telemetryEnv?: Readonly<Record<string, string>>;
+	readonly auth?: HarnessAuthSpec;
 }
 
 export const createSubprocessHarness = <Name extends string, const P extends PermissionMode>(
@@ -187,12 +196,126 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 			return { exitCode, stdout, stderr } satisfies ExecResult;
 		});
 
-	return {
+	const harness: Harness<Name> = {
 		name: config.name,
 		capabilities: config.capabilities,
 		defaultPermissions: config.defaultPermissions,
 		telemetryEnv: config.telemetryEnv,
+		auth: config.auth,
+		withAuth: (auth) => withAuth(harness, auth),
 		exec,
 		stream,
 	};
+	return harness;
+};
+
+/** Build the env record for a given `HarnessAuth` variant. */
+const buildResolveAuthEnv = <Name extends string>(
+	harness: Harness<Name>,
+	auth: HarnessAuth,
+): Effect.Effect<Record<string, string>, HarnessAuthError> => {
+	// Lazily-cached effect for Helper variant, created once per withAuth call.
+	// Stored outside the returned Effect so it persists across exec/stream calls.
+	let cachedFetch: Effect.Effect<Readonly<Record<string, string>>, HarnessAuthError> | null =
+		null;
+
+	switch (auth._tag) {
+		case 'Inherit':
+			return Effect.succeed({});
+
+		case 'ApiKey': {
+			const spec = harness.auth;
+			if (!spec || spec.envVars.length === 0) {
+				return Effect.fail(
+					new HarnessAuthError({
+						message: `harness '${harness.name}' has no auth spec; ApiKey requires at least one envVar entry`,
+						harness: HarnessName.make(harness.name),
+					}),
+				);
+			}
+			const firstVar = spec.envVars[0];
+			if (firstVar === undefined) {
+				return Effect.fail(
+					new HarnessAuthError({
+						message: `harness '${harness.name}' auth spec has no envVar entries`,
+						harness: HarnessName.make(harness.name),
+					}),
+				);
+			}
+			return Effect.succeed({ [firstVar.name]: Redacted.value(auth.value) });
+		}
+
+		case 'Env': {
+			const resolved: Record<string, string> = {};
+			for (const [k, v] of Object.entries(auth.env)) {
+				resolved[k] = typeof v === 'string' ? v : Redacted.value(v);
+			}
+			return Effect.succeed(resolved);
+		}
+
+		case 'Helper': {
+			const ttl = auth.ttl ?? Duration.minutes(5);
+			// Each call to resolveAuthEnv re-enters this Effect.gen; the mutable
+			// `cachedFetch` ensures Effect.cachedWithTTL is only created once.
+			return Effect.gen(function* () {
+				if (cachedFetch === null) {
+					cachedFetch = yield* Effect.cachedWithTTL(auth.fetch, ttl);
+				}
+				return yield* cachedFetch;
+			});
+		}
+	}
+};
+
+const mergedOpts = (authEnv: Record<string, string>, opts: ExecOpts): ExecOpts => ({
+	...opts,
+	env: { ...authEnv, ...opts.env },
+});
+
+const authKindStr = (auth: HarnessAuth): string => {
+	switch (auth._tag) {
+		case 'ApiKey':
+			return 'api-key';
+		case 'Env':
+			return 'env';
+		case 'Helper':
+			return 'helper';
+		case 'Inherit':
+			return 'inherit';
+	}
+};
+
+/**
+ * Wraps a harness with credential resolution. Auth env is merged before
+ * step-level `opts.env` so step-level values always take precedence.
+ * Span attributes `factory.harness.auth.kind` and `factory.harness.auth.envKeys`
+ * are annotated on the current span during auth resolution.
+ */
+export const withAuth = <Name extends string>(
+	harness: Harness<Name>,
+	auth: HarnessAuth,
+): Harness<Name> => {
+	const resolveAuthEnv = buildResolveAuthEnv(harness, auth);
+	const kind = authKindStr(auth);
+
+	const annotateAndResolve = resolveAuthEnv.pipe(
+		Effect.tap((authEnv) =>
+			Effect.annotateCurrentSpan({
+				'factory.harness.auth.kind': kind,
+				'factory.harness.auth.envKeys': Object.keys(authEnv).toSorted().join(','),
+			}),
+		),
+	);
+
+	const wrappedHarness: Harness<Name> = {
+		...harness,
+		withAuth: (newAuth) => withAuth(harness, newAuth),
+		exec: (opts) =>
+			Effect.flatMap(annotateAndResolve, (authEnv) => harness.exec(mergedOpts(authEnv, opts))),
+		stream: (opts) =>
+			Stream.flatMap(Stream.fromEffect(annotateAndResolve), (authEnv) =>
+				harness.stream(mergedOpts(authEnv, opts)),
+			),
+	};
+	return wrappedHarness;
 };
