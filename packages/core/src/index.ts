@@ -11,6 +11,7 @@ export {
 export {
 	ConfigLoadError,
 	type FactoryError,
+	HarnessAuthError,
 	HarnessExecError,
 	HarnessNotFoundError,
 	HarnessSpawnError,
@@ -94,6 +95,10 @@ export type {
 	FactoryEvent,
 	FactoryOptions,
 	Harness,
+	HarnessAuth,
+	HarnessAuthEnvVar,
+	HarnessAuthExtraVar,
+	HarnessAuthSpec,
 	HarnessEvent,
 	HarnessExecRequirements,
 	HarnessTokenUsage,

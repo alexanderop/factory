@@ -98,6 +98,12 @@ export class ResumeUnavailableError extends Data.TaggedError('ResumeUnavailableE
 	readonly reason: 'already-complete' | 'not-found' | 'in-progress';
 }> {}
 
+/** Resolving credentials for a harness (Helper fetch or missing ApiKey spec) failed. */
+export class HarnessAuthError extends Data.TaggedError('HarnessAuthError')<{
+	readonly message: string;
+	readonly harness: HarnessName;
+}> {}
+
 export type FactoryError =
 	| StepLoadError
 	| HarnessNotFoundError
@@ -113,4 +119,5 @@ export type FactoryError =
 	| UnsupportedPermissionError
 	| CapabilityMismatchError
 	| ResumeMismatchError
-	| ResumeUnavailableError;
+	| ResumeUnavailableError
+	| HarnessAuthError;
