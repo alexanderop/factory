@@ -69,13 +69,21 @@ interface RunStepArgs {
 	readonly prd: string;
 	readonly idleTimeoutMs?: number;
 	readonly permissions: PermissionMode;
+	readonly harnessEnv?: Readonly<Record<string, string>>;
+	readonly harnessArgs?: ReadonlyArray<string>;
 }
 
-const factoryHarnessEnv = (runDir: string, cwd: string, runId: RunId): Record<string, string> => ({
+const factoryHarnessEnv = (
+	runDir: string,
+	cwd: string,
+	runId: RunId,
+	extraEnv?: Readonly<Record<string, string>>,
+): Record<string, string> => ({
 	FACTORY_RUN_DIR: runDir,
 	FACTORY_RUN_ID: runId,
 	FACTORY_RUN_SHORT_ID: runId.slice(0, 8),
 	FACTORY_PROJECT_PLAN: `${cwd}/IMPLEMENTATION_PLAN.md`,
+	...extraEnv,
 });
 
 const resolvePermissions = (
@@ -514,6 +522,8 @@ const runStep = (
 			prd,
 			idleTimeoutMs,
 			permissions,
+			harnessEnv,
+			harnessArgs,
 		} = args;
 
 		const maxIters = options.maxIters ?? loaded.frontmatter.maxIters ?? 1;
@@ -564,7 +574,8 @@ const runStep = (
 						cwd,
 						idleTimeoutMs,
 						permissions,
-						env: factoryHarnessEnv(workspace.runDir, cwd, runId),
+						extraArgs: harnessArgs,
+						env: factoryHarnessEnv(workspace.runDir, cwd, runId, harnessEnv),
 					},
 					stepId,
 					stepOrd,
@@ -683,6 +694,8 @@ interface StepLoopArgs {
 	readonly permissionsOverride: PermissionMode | undefined;
 	readonly skipBeforeOrd: number;
 	readonly defaultHarness: HarnessName | undefined;
+	readonly harnessEnv?: Readonly<Record<string, string>>;
+	readonly harnessArgs?: ReadonlyArray<string>;
 }
 
 const runStepLoop = (args: StepLoopArgs) =>
@@ -700,6 +713,8 @@ const runStepLoop = (args: StepLoopArgs) =>
 			permissionsOverride,
 			skipBeforeOrd,
 			defaultHarness,
+			harnessEnv,
+			harnessArgs,
 		} = args;
 		for (const [ord, entry] of steps.entries()) {
 			const stepId = StepId.make(entry.id);
@@ -777,6 +792,8 @@ const runStepLoop = (args: StepLoopArgs) =>
 					prd,
 					idleTimeoutMs,
 					permissions,
+					harnessEnv,
+					harnessArgs,
 				});
 			}).pipe(
 				recordTaggedError,
@@ -868,6 +885,8 @@ export const runFactoryEffect = (
 			permissionsOverride: runOpts.permissions,
 			skipBeforeOrd: 0,
 			defaultHarness,
+			harnessEnv: runOpts.harnessEnv,
+			harnessArgs: runOpts.harnessArgs,
 		}).pipe(
 			Effect.tapError((error) =>
 				emitAndRecord(emitter, workspace, { type: 'error', runId, error }),
@@ -1035,6 +1054,8 @@ export const resumeFactoryEffect = (
 			permissionsOverride: resumeOpts.permissions,
 			skipBeforeOrd: plan.stepOrd,
 			defaultHarness,
+			harnessEnv: resumeOpts.harnessEnv,
+			harnessArgs: resumeOpts.harnessArgs,
 		}).pipe(
 			Effect.tapError((error) =>
 				emitAndRecord(emitter, workspace, { type: 'error', runId, error }),

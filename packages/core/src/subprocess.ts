@@ -43,6 +43,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		}
 		const base = Command.make(
 			config.bin,
+			...(opts.extraArgs ?? []),
 			...config.buildArgs(opts.prompt, { permissions: opts.permissions }),
 		);
 		const withStdin = Command.stdin(base, Stream.empty);

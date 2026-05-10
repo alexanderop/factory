@@ -1,4 +1,7 @@
 export { Hook } from './builders.ts';
+export { handlerRegistry } from './runtime/handlerRegistry.ts';
+export { runShim, encodeDecision } from './runtime/shim.ts';
+export type { RunShimOpts } from './runtime/shim.ts';
 export type { EffectOptions, RuleOptions } from './builders.ts';
 export { HookCompiler } from './services/HookCompiler.ts';
 export type { CompileOptions, HookCompilerService } from './services/HookCompiler.ts';

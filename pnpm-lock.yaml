@@ -144,6 +144,18 @@ importers:
       '@factory/core':
         specifier: workspace:*
         version: link:../core
+      '@factory/harness-claude-code':
+        specifier: workspace:*
+        version: link:../harness-claude-code
+      '@factory/harness-codex':
+        specifier: workspace:*
+        version: link:../harness-codex
+      '@factory/harness-copilot':
+        specifier: workspace:*
+        version: link:../harness-copilot
+      '@factory/hooks':
+        specifier: workspace:*
+        version: link:../hooks
       effect:
         specifier: ^3.21.2
         version: 3.21.2

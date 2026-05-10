@@ -32,3 +32,5 @@ export const codex = createSubprocessHarness({
 	},
 	buildArgs: codexBuildArgs,
 });
+
+export { codexHookEmitter } from './hookEmitter.ts';

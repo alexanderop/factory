@@ -1,6 +1,6 @@
 import { Args, Command, Options } from '@effect/cli';
 import { FileSystem, Path } from '@effect/platform';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
 import {
 	ConfigLoadError,
 	type Factory,
@@ -9,6 +9,17 @@ import {
 	ResumeUnavailableError,
 	type RunRecordingError,
 } from '@factory/core';
+import { claudeCodeHookEmitter } from '@factory/harness-claude-code';
+import { codexHookEmitter } from '@factory/harness-codex';
+import { copilotHookEmitter } from '@factory/harness-copilot';
+import {
+	handlerRegistry,
+	HookCompiler,
+	HookEmitter,
+	HookEvent,
+	HookRegistry,
+	runShim,
+} from '@factory/hooks';
 
 const VERSION = '0.0.0';
 
@@ -138,12 +149,35 @@ const runCommand = Command.make(
 			const permissionsMode = Option.getOrUndefined(permissions);
 
 			const factoryDef = yield* loadFactoryConfig(cwd, name);
+
+			const harness = factoryDef.harness;
+			const compiled = yield* harness
+				? Effect.gen(function* () {
+						const compiler = yield* HookCompiler;
+						const runDir = path.join(cwd, '.factory');
+						return yield* compiler.compile({ harness, runDir }).pipe(
+							Effect.option,
+						);
+					}).pipe(
+						Effect.provide(
+							HookCompiler.Default.pipe(
+								Layer.provide(handlerRegistry()),
+								Layer.provide(harnessEmitterLayer(harness)),
+							),
+						),
+					)
+				: Effect.succeed(Option.none());
+
+			const compiledConfig = Option.getOrUndefined(compiled);
+
 			yield* factoryDef.runEffect({
 				prd,
 				cwd,
 				idleTimeoutMs,
 				permissions: permissionsMode,
 				otel: !noOtel,
+				harnessEnv: compiledConfig?.envForHarness,
+				harnessArgs: compiledConfig?.argsForHarness,
 			});
 		}),
 );
@@ -224,6 +258,103 @@ const resumeCommand = Command.make(
 		}),
 );
 
+const harnessEmitterLayer = (harness: string): Layer.Layer<HookEmitter> => {
+	const emitter =
+		harness === 'codex'
+			? codexHookEmitter
+			: harness === 'copilot'
+				? copilotHookEmitter
+				: claudeCodeHookEmitter;
+	return Layer.succeed(HookEmitter, emitter);
+};
+
+const hooksListCommand = Command.make('list', {}, () =>
+	Effect.gen(function* () {
+		const registry = yield* HookRegistry;
+		const specs = yield* registry.all;
+		if (specs.length === 0) {
+			console.log('No hooks found in .factory/hooks.ts');
+			return;
+		}
+		for (const spec of specs) {
+			const detail = spec._tag === 'RuleSpec' ? `decide=${spec.decide}` : 'effect handler';
+			console.log(`  ${spec.id.slice(0, 8)}  on=${spec.on}  ${detail}`);
+		}
+	}).pipe(Effect.provide(handlerRegistry())),
+);
+
+const hooksCompileCommand = Command.make(
+	'compile',
+	{
+		harness: Options.choice('harness', ['claude-code', 'codex', 'copilot'] as const).pipe(
+			Options.withDescription('Target harness to compile hooks for'),
+			Options.withDefault('claude-code' as const),
+		),
+		runDir: Options.directory('run-dir').pipe(
+			Options.withDescription('Output directory for compiled hook configs'),
+			Options.optional,
+		),
+	},
+	({ harness, runDir: runDirOpt }) =>
+		Effect.gen(function* () {
+			const path = yield* Path.Path;
+			const cwd = path.resolve(process.cwd());
+			const runDir = Option.getOrElse(runDirOpt, () => path.join(cwd, '.factory'));
+			const compiler = yield* HookCompiler;
+			const compiled = yield* compiler.compile({ harness, runDir });
+			console.log(`Compiled hooks for ${harness}:`);
+			for (const file of compiled.files) {
+				console.log(`  wrote: ${file.path}`);
+			}
+		}).pipe(
+			Effect.provide(
+				HookCompiler.Default.pipe(
+					Layer.provide(handlerRegistry()),
+					Layer.provide(harnessEmitterLayer('claude-code')),
+				),
+			),
+		),
+);
+
+const decodeHookEvent = Schema.decodeUnknown(Schema.parseJson(HookEvent));
+
+const hooksCheckCommand = Command.make(
+	'check',
+	{
+		eventJson: Args.text({ name: 'event-json' }).pipe(
+			Args.withDescription('Hook event JSON to check against loaded specs'),
+		),
+	},
+	({ eventJson }) =>
+		Effect.gen(function* () {
+			const registry = yield* HookRegistry;
+			const event = yield* decodeHookEvent(eventJson).pipe(
+				Effect.mapError(
+					(e) => new Error(`invalid event JSON: ${e.message}`),
+				),
+			);
+			const specs = yield* registry.byEvent(event._tag);
+			if (specs.length === 0) {
+				console.log(`No hooks registered for event '${event._tag}'`);
+				return;
+			}
+			for (const spec of specs) {
+				const decision = yield* runShim({
+					hookId: spec.id,
+					stdinStream: Stream.fromIterable([new TextEncoder().encode(eventJson)]),
+				});
+				console.log(`  ${spec.id.slice(0, 8)}  → ${decision._tag}`);
+			}
+		}).pipe(Effect.provide(handlerRegistry())),
+);
+
+const hooksCommand = Command.make('hooks', {}, () =>
+	Effect.sync(() => {
+		console.log('factory hooks — manage and inspect hook specs');
+		console.log('Use --help to see available subcommands.');
+	}),
+).pipe(Command.withSubcommands([hooksListCommand, hooksCompileCommand, hooksCheckCommand]));
+
 const rootCommand = Command.make('factory', {}, () =>
 	Effect.sync(() => {
 		console.log(`factory v${VERSION} — software factory pipelines`);
@@ -231,7 +362,9 @@ const rootCommand = Command.make('factory', {}, () =>
 	}),
 );
 
-export const factoryCli = rootCommand.pipe(Command.withSubcommands([runCommand, resumeCommand]));
+export const factoryCli = rootCommand.pipe(
+	Command.withSubcommands([runCommand, resumeCommand, hooksCommand]),
+);
 
 export const cli = Command.run(factoryCli, {
 	name: 'factory',

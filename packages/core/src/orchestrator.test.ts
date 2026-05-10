@@ -433,4 +433,39 @@ Iterate.`,
 			assertTrue(errorEvent !== undefined);
 		}),
 	);
+
+	it.effect('injects harnessEnv and harnessArgs from RunOptions into ExecOpts', () =>
+		Effect.gen(function* () {
+			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
+			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
+
+			const calls: ExecOpts[] = [];
+			const recordingHarness = scriptedHarness('claude-code', [{ stdout: 'done\n' }], {
+				onCall: (opts) => calls.push(opts),
+			});
+
+			const layer = Layer.mergeAll(
+				SilentDisplay.layer(displayRef),
+				recordingEventEmitter.layer(eventsRef),
+				harnessRegistryLayer([recordingHarness]),
+				InMemoryStepLoader.layer(new Map([['./steps/step.md', '---\nname: step\n---\nDo it.']])),
+				scriptedUntilEvaluator.layer([true]),
+				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
+			).pipe(Layer.provideMerge(NodeContext.layer));
+
+			yield* runFactoryEffect(
+				{ name: 'pipeline', harness: 'claude-code' },
+				[{ id: 'step', source: './steps/step.md', options: {} }],
+				{
+					prd: 'inline PRD',
+					cwd: process.cwd(),
+					harnessEnv: { FACTORY_HOOK_HARNESS: 'claude-code' },
+					harnessArgs: ['--settings', '/tmp/settings.json'],
+				},
+			).pipe(Effect.provide(layer));
+
+			strictEqual(calls[0]?.env?.['FACTORY_HOOK_HARNESS'], 'claude-code');
+			deepStrictEqual(calls[0]?.extraArgs, ['--settings', '/tmp/settings.json']);
+		}),
+	);
 });

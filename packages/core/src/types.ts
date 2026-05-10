@@ -18,6 +18,8 @@ export interface ExecOpts {
 	readonly prompt: string;
 	readonly cwd?: string;
 	readonly env?: Readonly<Record<string, string>>;
+	/** Extra arguments prepended to harness-specific args (e.g. ['--settings', path] from hooks). */
+	readonly extraArgs?: ReadonlyArray<string>;
 	readonly idleTimeoutMs?: number;
 	readonly permissions: PermissionMode;
 }
@@ -197,6 +199,10 @@ export interface RunOptions {
 	readonly onStep?: (event: FactoryEvent) => void;
 	readonly onError?: (event: Extract<FactoryEvent, { type: 'error' }>) => void;
 	readonly otel?: boolean;
+	/** Pre-compiled hook env vars injected into every harness invocation. */
+	readonly harnessEnv?: Readonly<Record<string, string>>;
+	/** Pre-compiled hook args prepended to every harness invocation. */
+	readonly harnessArgs?: ReadonlyArray<string>;
 }
 
 export interface ResumeOptions {
@@ -207,6 +213,10 @@ export interface ResumeOptions {
 	readonly onStep?: (event: FactoryEvent) => void;
 	readonly onError?: (event: Extract<FactoryEvent, { type: 'error' }>) => void;
 	readonly otel?: boolean;
+	/** Pre-compiled hook env vars injected into every harness invocation. */
+	readonly harnessEnv?: Readonly<Record<string, string>>;
+	/** Pre-compiled hook args prepended to every harness invocation. */
+	readonly harnessArgs?: ReadonlyArray<string>;
 }
 
 export interface StepEntry {
@@ -217,6 +227,7 @@ export interface StepEntry {
 
 export interface Factory<Names extends string = string, StepIds extends string = never> {
 	readonly name: string;
+	readonly harness?: string;
 	readonly step: <Id extends string>(
 		id: Exclude<Id, StepIds>,
 		source: string,

@@ -19,6 +19,10 @@
 		"@effect/platform": "^0.96.1",
 		"@effect/platform-node": "^0.106.0",
 		"@factory/core": "workspace:*",
+		"@factory/harness-claude-code": "workspace:*",
+		"@factory/harness-codex": "workspace:*",
+		"@factory/harness-copilot": "workspace:*",
+		"@factory/hooks": "workspace:*",
 		"effect": "^3.21.2"
 	},
 	"devDependencies": {
