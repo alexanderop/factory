@@ -13,6 +13,19 @@ Your job: walk the ticket list in order, doing TDD → implement →
 refactor → commit for each one. One commit per ticket. The branch
 accumulates them all; the next step opens a single PR.
 
+## Mode guard
+
+First, read `$FACTORY_RUN_DIR/mode.txt`. If its contents are not
+exactly `ralph`, you are not the routed step for this run. Do nothing
+and end your message immediately with:
+
+```
+<promise>COMPLETE</promise>
+```
+
+(The orchestrator's `until` predicate matches that token, so the step
+exits on iter 1 with no work done. The next step picks up.)
+
 ## Figuring out where you are
 
 Read `$FACTORY_RUN_DIR/plan.md` and `git log main..HEAD --oneline` on

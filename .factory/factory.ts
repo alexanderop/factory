@@ -12,6 +12,9 @@ export default factory({
 	harnesses: [claudeCode],
 })
 	.step('plan', step('plan'))
+	.step('triage', step('triage'))
 	.step('branch', step('branch'))
+	.step('single', step('single'))
 	.step('ralph', step('ralph'))
+	.step('simplify', step('simplify'))
 	.step('pr', step('pr'));
