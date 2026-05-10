@@ -1,17 +1,23 @@
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertInstanceOf, assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Layer, Ref, Stream } from 'effect';
+import { Cause, Effect, Exit, Layer, Logger, LogLevel, Ref, Stream } from 'effect';
 import { CapabilityMismatchError, type HarnessCapabilities } from './capabilities.ts';
 import {
+	HarnessExecError,
 	HarnessIdleTimeoutError,
+	RunRecordingError,
 	StepIdleTimeoutError,
 	StepMaxItersError,
 	UnsupportedPermissionError,
 } from './errors.ts';
 import { HarnessName, RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
-import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
+import {
+	InMemoryRunWorkspace,
+	RunWorkspace,
+	type RunWorkspaceService,
+} from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
 	harnessRegistryLayer,
@@ -501,5 +507,88 @@ Iterate.`,
 			const errorEvent = events.find((e) => e.type === 'error');
 			assertTrue(errorEvent !== undefined);
 		}),
+	);
+
+	it.effect(
+		'preserves the original failure when recordRunEnd fails (recording-side error is logged, not propagated)',
+		() =>
+			Effect.gen(function* () {
+				const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
+				const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
+
+				const failingHarness = scriptedHarness('claude-code', [
+					{ stdout: '', stderr: 'boom\n', exitCode: 7 },
+				]);
+
+				const recordedEnds: Array<{ status: 'ok' | 'error' | 'interrupted' }> = [];
+				const stubWorkspace: RunWorkspaceService = {
+					runId: RunId.make('record-end-fail-run'),
+					runDir: '/tmp/stub-record-end-fail',
+					recordRunStart: () => Effect.void,
+					recordRunResume: () => Effect.fail(new RunRecordingError({ message: 'not used' })),
+					recordRunEnd: (args) => {
+						recordedEnds.push({ status: args.status });
+						return Effect.fail(
+							new RunRecordingError({
+								message: `simulated recordRunEnd failure for status=${args.status}`,
+							}),
+						);
+					},
+					recordStepStart: () => Effect.void,
+					recordStepEnd: () => Effect.void,
+					recordIterStart: () =>
+						Effect.succeed({
+							iterDir: '/tmp/stub/iter',
+							stdoutPath: '/tmp/stub/iter/stdout.log',
+							stderrPath: '/tmp/stub/iter/stderr.log',
+							promptPath: '/tmp/stub/iter/prompt.md',
+							eventsPath: '/tmp/stub/iter/events.jsonl',
+						}),
+					recordIterEnd: () => Effect.void,
+					appendEvent: () => Effect.void,
+					appendStdout: () => Effect.void,
+					appendStderr: () => Effect.void,
+					appendIterEvent: () => Effect.void,
+				};
+
+				const capturedCauses: Array<Cause.Cause<unknown>> = [];
+				const captureLogger = Logger.make((options) => {
+					capturedCauses.push(options.cause);
+				});
+
+				const layer = Layer.mergeAll(
+					SilentDisplay.layer(displayRef),
+					recordingEventEmitter.layer(eventsRef),
+					harnessRegistryLayer([failingHarness]),
+					InMemoryStepLoader.layer(new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']])),
+					scriptedUntilEvaluator.layer([true]),
+					Layer.succeed(RunWorkspace, stubWorkspace),
+					Logger.replace(Logger.defaultLogger, captureLogger),
+				).pipe(Layer.provideMerge(NodeContext.layer));
+
+				const exit = yield* Effect.exit(
+					runFactoryEffect(
+						{ name: 'sdd', harness: 'claude-code', harnesses: [failingHarness] },
+						[{ id: 'only', source: './steps/only.md', options: {} }],
+						{ prd: 'inline PRD', cwd: process.cwd() },
+					).pipe(Effect.provide(layer), Logger.withMinimumLogLevel(LogLevel.Debug)),
+				);
+
+				assertTrue(Exit.isFailure(exit));
+				const failure = Cause.failureOption(exit.cause);
+				assertTrue(failure._tag === 'Some');
+				assertInstanceOf(failure.value, HarnessExecError);
+
+				deepStrictEqual(
+					recordedEnds.map((e) => e.status),
+					['error'],
+				);
+
+				const recordingErrorLogged = capturedCauses.some((cause) => {
+					const opt = Cause.failureOption(cause);
+					return opt._tag === 'Some' && opt.value instanceof RunRecordingError;
+				});
+				assertTrue(recordingErrorLogged);
+			}),
 	);
 });

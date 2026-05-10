@@ -28,7 +28,7 @@ export interface RunResumeArgs {
 }
 
 export interface RunEndArgs {
-	readonly status: 'ok' | 'error';
+	readonly status: 'ok' | 'error' | 'interrupted';
 	readonly errorTag?: string;
 	readonly errorMessage?: string;
 }

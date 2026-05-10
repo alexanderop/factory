@@ -1,5 +1,5 @@
 import { FileSystem, Path, type CommandExecutor } from '@effect/platform';
-import { Clock, Effect, Exit, Metric, Stream, type Tracer } from 'effect';
+import { Cause, Clock, Effect, Exit, Metric, Option, Stream, type Tracer } from 'effect';
 import {
 	assistantMessagesTotal,
 	costMicroUsd,
@@ -27,7 +27,7 @@ import {
 	type HarnessSpawnError,
 	type RunRecordingError,
 } from './errors.ts';
-import { planResume, readStep, type ResumePlan } from './services/runManifest.ts';
+import { planResume, readRun, readStep, type ResumePlan } from './services/runManifest.ts';
 import { harnessOtelEnv } from './harnessOtelEnv.ts';
 import { HarnessName, PipelineName, type RunId, StepId } from './ids.ts';
 import {
@@ -122,6 +122,84 @@ const emitAndRecord = (
 	workspace: RunWorkspaceService,
 	event: FactoryEvent,
 ) => Effect.zipRight(emitter.emit(event), workspace.appendEvent(event));
+
+interface RunFinalizerArgs {
+	readonly runId: RunId;
+	readonly pipeline: PipelineName;
+	readonly runStartedAt: number;
+	readonly resumed: boolean;
+	readonly emitter: EventEmitterService;
+	readonly workspace: RunWorkspaceService;
+	readonly display: DisplayService;
+}
+
+/**
+ * Wraps the step loop with finalisation that runs on success, typed
+ * failure, **and** fiber interrupt. The original cause is always
+ * preserved — bookkeeping calls (recordRunEnd, run-end emit, metrics)
+ * are wrapped with `Effect.ignoreLogged` so a recording-side failure
+ * never replaces the user's error; it shows up in logs instead.
+ */
+const withRunFinalizer = (finalizer: RunFinalizerArgs) => {
+	const { runId, pipeline, runStartedAt, resumed, emitter, workspace, display } = finalizer;
+	const tagMetric = <A, E, R>(
+		outcome: 'ok' | 'error' | 'interrupted',
+		m: Effect.Effect<A, E, R>,
+	): Effect.Effect<A, E, R> => {
+		const tagged = m.pipe(
+			Effect.tagMetrics('outcome', outcome),
+			Effect.tagMetrics('pipeline', pipeline),
+		);
+		return resumed ? tagged.pipe(Effect.tagMetrics('resumed', 'true')) : tagged;
+	};
+	const recordRunMetrics = (outcome: 'ok' | 'error' | 'interrupted') =>
+		Effect.gen(function* () {
+			const endedAt = yield* Clock.currentTimeMillis;
+			yield* tagMetric(outcome, Metric.increment(runsTotal));
+			yield* tagMetric(outcome, Metric.update(runDurationMs, endedAt - runStartedAt));
+		});
+	return <A, R>(eff: Effect.Effect<A, FactoryError, R>): Effect.Effect<A, FactoryError, R> =>
+		eff.pipe(
+			Effect.onExit((exit) =>
+				Exit.match(exit, {
+					onSuccess: () =>
+						Effect.all(
+							[
+								emitAndRecord(emitter, workspace, { type: 'run.end', runId }),
+								workspace.recordRunEnd({ status: 'ok' }),
+								recordRunMetrics('ok'),
+								display.runEnd(runId),
+							],
+							{ discard: true },
+						).pipe(Effect.ignoreLogged),
+					onFailure: (cause) =>
+						Option.match(Cause.failureOption(cause), {
+							onSome: (error) =>
+								Effect.all(
+									[
+										emitAndRecord(emitter, workspace, { type: 'error', runId, error }),
+										workspace.recordRunEnd({
+											status: 'error',
+											errorTag: error._tag,
+											errorMessage: error.message,
+										}),
+										recordRunMetrics('error'),
+									],
+									{ discard: true },
+								).pipe(Effect.ignoreLogged),
+							onNone: () =>
+								Effect.all(
+									[
+										workspace.recordRunEnd({ status: 'interrupted' }),
+										recordRunMetrics('interrupted'),
+									],
+									{ discard: true },
+								).pipe(Effect.ignoreLogged),
+						}),
+				}),
+			),
+		);
+};
 
 interface StreamHarnessArgs {
 	readonly runId: RunId;
@@ -852,19 +930,6 @@ export const runFactoryEffect = (
 		});
 		yield* emitAndRecord(emitter, workspace, { type: 'run.start', runId, pipeline });
 
-		const recordRunMetrics = (outcome: 'ok' | 'error') =>
-			Effect.gen(function* () {
-				const endedAt = yield* Clock.currentTimeMillis;
-				yield* Metric.increment(runsTotal).pipe(
-					Effect.tagMetrics('outcome', outcome),
-					Effect.tagMetrics('pipeline', pipeline),
-				);
-				yield* Metric.update(runDurationMs, endedAt - runStartedAt).pipe(
-					Effect.tagMetrics('outcome', outcome),
-					Effect.tagMetrics('pipeline', pipeline),
-				);
-			});
-
 		yield* runStepLoop({
 			runId,
 			factoryOpts,
@@ -876,23 +941,16 @@ export const runFactoryEffect = (
 			skipBeforeOrd: 0,
 			defaultHarness,
 		}).pipe(
-			Effect.tapError((error) =>
-				emitAndRecord(emitter, workspace, { type: 'error', runId, error }),
-			),
-			Effect.tapError((error) =>
-				workspace.recordRunEnd({
-					status: 'error',
-					errorTag: error._tag,
-					errorMessage: error.message,
-				}),
-			),
-			Effect.tapError(() => recordRunMetrics('error')),
+			withRunFinalizer({
+				runId,
+				pipeline,
+				runStartedAt,
+				resumed: false,
+				emitter,
+				workspace,
+				display,
+			}),
 		);
-
-		yield* workspace.recordRunEnd({ status: 'ok' });
-		yield* recordRunMetrics('ok');
-		yield* emitAndRecord(emitter, workspace, { type: 'run.end', runId });
-		yield* display.runEnd(runId);
 	}).pipe(
 		Effect.withSpan(`factory.run ${factoryOpts.name}`, {
 			attributes: { 'factory.pipeline': factoryOpts.name },
@@ -983,9 +1041,11 @@ export const resumeFactoryEffect = (
 		const pipeline = PipelineName.make(factoryOpts.name);
 		const cwd = resumeOpts.cwd ?? process.cwd();
 
+		const path = yield* Path.Path;
+		const runRecord = yield* readRun(path.join(workspace.runDir, 'run.json'));
 		const recorded = yield* loadRecordedSteps(workspace.runDir);
 		const pipelineRefs = steps.map((entry, ord) => ({ ord, stepId: StepId.make(entry.id) }));
-		const plan = yield* planResume(recorded, pipelineRefs);
+		const plan = yield* planResume(recorded, pipelineRefs, runRecord.status);
 		if (plan.kind === 'already-done') {
 			return yield* Effect.fail(
 				new ResumeUnavailableError({
@@ -1017,21 +1077,6 @@ export const resumeFactoryEffect = (
 		yield* workspace.recordRunResume({ fromStepOrd: plan.stepOrd });
 		yield* emitAndRecord(emitter, workspace, { type: 'run.start', runId, pipeline });
 
-		const recordRunMetrics = (outcome: 'ok' | 'error') =>
-			Effect.gen(function* () {
-				const endedAt = yield* Clock.currentTimeMillis;
-				yield* Metric.increment(runsTotal).pipe(
-					Effect.tagMetrics('outcome', outcome),
-					Effect.tagMetrics('pipeline', pipeline),
-					Effect.tagMetrics('resumed', 'true'),
-				);
-				yield* Metric.update(runDurationMs, endedAt - runStartedAt).pipe(
-					Effect.tagMetrics('outcome', outcome),
-					Effect.tagMetrics('pipeline', pipeline),
-					Effect.tagMetrics('resumed', 'true'),
-				);
-			});
-
 		yield* runStepLoop({
 			runId,
 			factoryOpts,
@@ -1043,23 +1088,16 @@ export const resumeFactoryEffect = (
 			skipBeforeOrd: plan.stepOrd,
 			defaultHarness,
 		}).pipe(
-			Effect.tapError((error) =>
-				emitAndRecord(emitter, workspace, { type: 'error', runId, error }),
-			),
-			Effect.tapError((error) =>
-				workspace.recordRunEnd({
-					status: 'error',
-					errorTag: error._tag,
-					errorMessage: error.message,
-				}),
-			),
-			Effect.tapError(() => recordRunMetrics('error')),
+			withRunFinalizer({
+				runId,
+				pipeline,
+				runStartedAt,
+				resumed: true,
+				emitter,
+				workspace,
+				display,
+			}),
 		);
-
-		yield* workspace.recordRunEnd({ status: 'ok' });
-		yield* recordRunMetrics('ok');
-		yield* emitAndRecord(emitter, workspace, { type: 'run.end', runId });
-		yield* display.runEnd(runId);
 		return plan;
 	}).pipe(
 		Effect.withSpan(`factory.resume`, {

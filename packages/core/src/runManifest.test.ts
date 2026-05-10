@@ -3,7 +3,7 @@ import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertInstanceOf, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
 import { Cause, Effect, Exit } from 'effect';
-import { ResumeMismatchError, RunRecordingError } from './errors.ts';
+import { ResumeMismatchError, ResumeUnavailableError, RunRecordingError } from './errors.ts';
 import { HarnessName, PipelineName, RunId, StepId } from './ids.ts';
 import {
 	atomicWriteString,
@@ -123,7 +123,7 @@ describe('planResume', () => {
 				stepRecord(1, 'ralph', 'ok'),
 				stepRecord(2, 'refactor', 'ok'),
 			];
-			const plan = yield* planResume(recorded, pipeline);
+			const plan = yield* planResume(recorded, pipeline, 'error');
 			deepStrictEqual(plan, { kind: 'already-done' });
 		}),
 	);
@@ -135,7 +135,7 @@ describe('planResume', () => {
 				stepRecord(1, 'ralph', 'failed'),
 				stepRecord(2, 'refactor', 'ok'),
 			];
-			const plan = yield* planResume(recorded, pipeline);
+			const plan = yield* planResume(recorded, pipeline, 'error');
 			deepStrictEqual(plan, { kind: 'start-at', stepOrd: 1 });
 		}),
 	);
@@ -143,7 +143,7 @@ describe('planResume', () => {
 	it.effect('starts at first running step (zombie)', () =>
 		Effect.gen(function* () {
 			const recorded = [stepRecord(0, 'plan', 'ok'), stepRecord(1, 'ralph', 'running')];
-			const plan = yield* planResume(recorded, pipeline);
+			const plan = yield* planResume(recorded, pipeline, 'error');
 			deepStrictEqual(plan, { kind: 'start-at', stepOrd: 1 });
 		}),
 	);
@@ -151,14 +151,14 @@ describe('planResume', () => {
 	it.effect('starts at first missing recorded step', () =>
 		Effect.gen(function* () {
 			const recorded = [stepRecord(0, 'plan', 'ok')];
-			const plan = yield* planResume(recorded, pipeline);
+			const plan = yield* planResume(recorded, pipeline, 'error');
 			deepStrictEqual(plan, { kind: 'start-at', stepOrd: 1 });
 		}),
 	);
 
 	it.effect('starts at ord 0 when nothing was recorded', () =>
 		Effect.gen(function* () {
-			const plan = yield* planResume([], pipeline);
+			const plan = yield* planResume([], pipeline, 'error');
 			deepStrictEqual(plan, { kind: 'start-at', stepOrd: 0 });
 		}),
 	);
@@ -167,9 +167,18 @@ describe('planResume', () => {
 		Effect.gen(function* () {
 			const recorded = [stepRecord(0, 'plan', 'ok'), stepRecord(1, 'ralph', 'failed')];
 			const drifted = [pipelineRef(0, 'plan'), pipelineRef(1, 'simplify')];
-			const exit = yield* Effect.exit(planResume(recorded, drifted));
+			const exit = yield* Effect.exit(planResume(recorded, drifted, 'error'));
 			const failure = Cause.failureOption(Exit.isFailure(exit) ? exit.cause : Cause.empty);
 			assertInstanceOf(failure._tag === 'Some' ? failure.value : null, ResumeMismatchError);
+		}),
+	);
+
+	it.effect('refuses to resume when run status is interrupted', () =>
+		Effect.gen(function* () {
+			const recorded = [stepRecord(0, 'plan', 'ok'), stepRecord(1, 'ralph', 'failed')];
+			const exit = yield* Effect.exit(planResume(recorded, pipeline, 'interrupted'));
+			const failure = Cause.failureOption(Exit.isFailure(exit) ? exit.cause : Cause.empty);
+			assertInstanceOf(failure._tag === 'Some' ? failure.value : null, ResumeUnavailableError);
 		}),
 	);
 });

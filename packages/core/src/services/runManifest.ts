@@ -1,9 +1,9 @@
 import { FileSystem } from '@effect/platform';
 import { Effect, Schema } from 'effect';
-import { ResumeMismatchError, RunRecordingError } from '../errors.ts';
+import { ResumeMismatchError, ResumeUnavailableError, RunRecordingError } from '../errors.ts';
 import { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
 
-export const RunStatus = Schema.Literal('running', 'ok', 'error');
+export const RunStatus = Schema.Literal('running', 'ok', 'error', 'interrupted');
 export type RunStatus = typeof RunStatus.Type;
 
 export const StepStatus = Schema.Literal('running', 'ok', 'failed');
@@ -154,6 +154,9 @@ export interface PipelineStepRef {
 /**
  * Decide where to resume a run by walking the pipeline in declared order.
  *
+ * - If the recorded run's status is `'interrupted'`, refuse with
+ *   `ResumeUnavailableError` (`reason: 'in-progress'`). Resume of
+ *   interrupted runs is not yet supported.
  * - If `pipelineSteps[ord]` has a matching `recordedSteps[ord]` and its
  *   `stepId` differs, we refuse with `ResumeMismatchError` — the pipeline
  *   shape changed since the run started.
@@ -165,8 +168,17 @@ export interface PipelineStepRef {
 export const planResume = (
 	recordedSteps: ReadonlyArray<StepRecord>,
 	pipelineSteps: ReadonlyArray<PipelineStepRef>,
-): Effect.Effect<ResumePlan, ResumeMismatchError> =>
+	runStatus: RunStatus,
+): Effect.Effect<ResumePlan, ResumeMismatchError | ResumeUnavailableError> =>
 	Effect.gen(function* () {
+		if (runStatus === 'interrupted') {
+			return yield* Effect.fail(
+				new ResumeUnavailableError({
+					message: 'run was interrupted; resume of interrupted runs is not yet supported',
+					reason: 'in-progress',
+				}),
+			);
+		}
 		const byOrd = new Map(recordedSteps.map((s) => [s.ord, s] as const));
 		for (const pipelineStep of pipelineSteps) {
 			const recorded = byOrd.get(pipelineStep.ord);

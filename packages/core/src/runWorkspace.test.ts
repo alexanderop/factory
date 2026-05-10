@@ -2,10 +2,22 @@ import { FileSystem, Path } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Layer, Predicate, Ref, Schema } from 'effect';
+import {
+	Cause,
+	Deferred,
+	Effect,
+	Exit,
+	Fiber,
+	Layer,
+	Predicate,
+	Ref,
+	Schema,
+	Stream,
+} from 'effect';
 import { ResumeUnavailableError, StepMaxItersError } from './errors.ts';
 import { HarnessName, PipelineName, RunId, StepId } from './ids.ts';
 import { resumeFactoryEffect, runFactoryEffect } from './orchestrator.ts';
+import type { Harness, HarnessEvent } from './types.ts';
 import {
 	decodeRun,
 	decodeStep,
@@ -241,6 +253,60 @@ describe('runWorkspace integration (file-only manifests)', () => {
 			const summary = yield* decodeIterRecord(summaryRaw);
 			strictEqual(summary.n, 2);
 			strictEqual(summary.untilPassed, true);
+		}).pipe(Effect.provide(NodeContext.layer)),
+	);
+
+	it.scoped('records run as interrupted when fiber is interrupted mid-step', () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-interrupt-' });
+			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
+			const runId = RunId.make('interrupt-test-run');
+
+			const stepStarted = yield* Deferred.make<void>();
+
+			const hangingHarness: Harness<'claude-code'> = {
+				name: 'claude-code',
+				capabilities: {
+					loadSession: false,
+					mcp: { http: false, sse: false },
+					prompt: { image: false, audio: false, embeddedContext: false },
+					session: { list: false, resume: false, close: false },
+					factory: {
+						permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
+						toolEvents: false,
+					},
+				},
+				exec: () => Effect.never,
+				stream: (): Stream.Stream<HarnessEvent> => {
+					const signal = Deferred.succeed(stepStarted);
+					const never: Stream.Stream<HarnessEvent> = Stream.never;
+					return Stream.fromEffect(signal).pipe(Stream.flatMap(() => never));
+				},
+			};
+
+			const layer = Layer.mergeAll(
+				SilentDisplay.layer(displayRef),
+				noopEventEmitter.layer,
+				harnessRegistryLayer([hangingHarness]),
+				InMemoryStepLoader.layer(new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']])),
+				scriptedUntilEvaluator.layer([true]),
+				LiveRunWorkspace.layer({ runId, cwd: tmp }),
+			).pipe(Layer.provideMerge(NodeContext.layer));
+
+			const fiber = yield* runFactoryEffect(
+				{ name: 'sdd', harness: 'claude-code', harnesses: [hangingHarness] },
+				[{ id: 'only', source: './steps/only.md', options: {} }],
+				{ prd: 'inline PRD', cwd: tmp },
+			).pipe(Effect.provide(layer), Effect.fork);
+
+			yield* Deferred.await(stepStarted);
+			yield* Fiber.interrupt(fiber);
+
+			const runDir = `${tmp}/.factory/runs/${runId}`;
+			const run = yield* decodeRun(yield* fs.readFileString(`${runDir}/run.json`));
+			strictEqual(run.status, 'interrupted');
+			assertTrue(run.endedAt !== undefined);
 		}).pipe(Effect.provide(NodeContext.layer)),
 	);
 });
