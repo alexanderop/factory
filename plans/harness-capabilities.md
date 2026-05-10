@@ -2,6 +2,8 @@
 name: harness-capabilities
 description: Replace the implicit `supports: PermissionMode[]` array with an ACP-shaped capability contract per harness, so steps can declare requirements and the orchestrator picks/rejects harnesses by structural match.
 type: plan
+status: done
+created: 2026-05-09
 ---
 
 # Plan: harness capability contract

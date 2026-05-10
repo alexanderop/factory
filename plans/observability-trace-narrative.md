@@ -1,6 +1,14 @@
+---
+name: observability-trace-narrative
+description: Follow-up to observability-improvements based on the second end-to-end Aspire run — make the trace narrate itself so a fresh reader can reconstruct what happened from spans alone.
+type: plan
+status: draft
+created: 2026-05-09
+---
+
 # Observability — make the trace narrate itself
 
-Status: draft. Owner: @alex. Follow-up to
+Owner: @alex. Follow-up to
 [`observability-improvements.md`](./observability-improvements.md), based on
 the second end-to-end Aspire run (trace
 `d342ca79b464bdf5dbebc979823801db`, `factory.run sdd`, 14m 1s, 94 spans,

@@ -2,6 +2,8 @@
 name: permissions
 description: Configurable permission model so coding harnesses default to autonomous (no prompts), with per-pipeline / per-step / CLI overrides for finer control.
 type: plan
+status: done
+created: 2026-05-09
 ---
 
 # Plan: harness permissions

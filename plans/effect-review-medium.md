@@ -1,6 +1,14 @@
+---
+name: effect-review-medium
+description: Concrete fixes for the medium-severity findings from the per-module Effect code review — tighten error channels, remove concurrency footguns, bring CLI and tests in line with project conventions.
+type: plan
+status: not-started
+created: 2026-05-09
+---
+
 # Effect review — medium-severity fixes
 
-Status: not started. Owner: @alex.
+Owner: @alex.
 
 Concrete fixes for the medium-severity findings from the per-module
 Effect code review. None of these block correctness today; together

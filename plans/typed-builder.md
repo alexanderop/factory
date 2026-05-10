@@ -1,3 +1,11 @@
+---
+name: typed-builder
+description: Make `factory()` carry compile-time information about registered harnesses and declared steps so misspellings and references to undeclared things are TypeScript errors instead of runtime errors. Types-only; runtime unchanged.
+type: plan
+status: done
+created: 2026-05-09
+---
+
 # Typed factory builder
 
 Make `factory()` carry compile-time information about registered harnesses and

@@ -1,6 +1,14 @@
+---
+name: observability
+description: Make every interesting thing during a factory run visible without scraping `.factory/runs/<runId>/` — traces per run nesting steps/iters/harness/tool calls, correlated logs, metrics, and span-assertable tests.
+type: plan
+status: done
+created: 2026-05-09
+---
+
 # Observability — logs, traces, metrics, tool calls
 
-Status: draft. Owner: @alex.
+Owner: @alex.
 
 ## Goal
 

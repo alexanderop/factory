@@ -1,6 +1,14 @@
+---
+name: observability-improvements
+description: Follow-up to observability.md addressing gaps surfaced by the first end-to-end Aspire run — sharper traces/logs/metrics for ralph loops with broken tests.
+type: plan
+status: in-progress
+created: 2026-05-09
+---
+
 # Observability — improvements after first end-to-end run
 
-Status: in progress. Owner: @alex.
+Owner: @alex.
 
 Follow-up to [`observability.md`](./observability.md). The base implementation
 ships traces, logs, metrics, and tool-call spans; this plan addresses the gaps

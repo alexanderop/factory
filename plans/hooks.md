@@ -1,6 +1,14 @@
+---
+name: hooks
+description: Let factory users author hooks once in TS/Effect and have factory compile them to per-harness configs (Claude Code, Codex CLI, Copilot CLI) before each run, so a single rule works everywhere.
+type: plan
+status: not-started
+created: 2026-05-09
+---
+
 # Hooks — unified hook authoring across harnesses
 
-Status: not started. Owner: @alex.
+Owner: @alex.
 
 Let factory users author hooks once in TS/Effect and have factory compile
 them to per-harness configs (Claude Code, Codex CLI, Copilot CLI) before

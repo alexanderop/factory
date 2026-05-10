@@ -1,6 +1,14 @@
+---
+name: harness-auth
+description: Let factory users hand each harness an explicit credential — Anthropic/OpenAI API keys, GH_TOKEN PAT, or inherited subscription — at factory-config time so harness CLIs work in CI, containers, and headless machines.
+type: plan
+status: not-started
+created: 2026-05-09
+---
+
 # Harness auth — API keys, tokens, and inherited subscriptions
 
-Status: not started. Owner: @alex.
+Owner: @alex.
 
 Let factory users hand each harness an explicit credential — an Anthropic API
 key, an OpenAI API key, a `GH_TOKEN` PAT — at factory-config time, so the

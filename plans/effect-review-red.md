@@ -1,6 +1,14 @@
+---
+name: effect-review-red
+description: Concrete fixes for the seven high-severity findings from the per-module Effect code review. Each item is independently shippable; ordering groups changes that share a file.
+type: plan
+status: not-started
+created: 2026-05-09
+---
+
 # Effect review — high-severity fixes
 
-Status: not started. Owner: @alex.
+Owner: @alex.
 
 Concrete fixes for the seven high-severity findings from the per-module
 Effect code review. Each item is independently shippable; suggested order

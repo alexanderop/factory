@@ -2,6 +2,8 @@
 name: effect-vitest-migration
 description: Adopt `@effect/vitest` idioms across our test suite — `it.effect`/`it.scoped`, `assertSuccess`/`assertFailure` from `@effect/vitest/utils`, scoped temp dirs, and `it.layer` for shared layers — and codify the result as `patterns/testing-effect.md` v2.
 type: plan
+status: in-progress
+created: 2026-05-09
 ---
 
 # Plan: align our test setup with Effect's idioms

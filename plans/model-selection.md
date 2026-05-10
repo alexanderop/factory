@@ -2,6 +2,8 @@
 name: model-selection
 description: Configurable model selection per harness, with factory-wide defaults keyed by harness name and per-step overrides — same precedence shape as permissions.
 type: plan
+status: not-started
+created: 2026-05-09
 ---
 
 # Plan: model selection

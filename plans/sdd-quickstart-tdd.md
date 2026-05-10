@@ -2,6 +2,8 @@
 name: sdd-quickstart-tdd
 description: Reshape the sdd-quickstart example into a 3-phase pipeline — plan → ralph (TDD per slice) → refactor — using example-local step overrides. Wires up the `.factory/factory.ts` that the README already promises.
 type: plan
+status: done
+created: 2026-05-09
 ---
 
 # Plan: sdd-quickstart TDD pipeline

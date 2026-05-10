@@ -2,6 +2,8 @@
 name: ralph-and-run-artifacts
 description: Per-run SQLite DB + on-disk artifacts as the source of truth for what happened during a factory run, plus the ralph-quality fixes that depend on having that context available.
 type: plan
+status: superseded
+created: 2026-05-09
 ---
 
 # Plan: ralph + run artifacts (SQLite per run)

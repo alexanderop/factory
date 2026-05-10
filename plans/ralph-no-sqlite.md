@@ -2,6 +2,8 @@
 name: ralph-no-sqlite
 description: Replace per-run SQLite with plain files (JSON manifests + JSONL events + markdown ledgers). Aligns the factory with the Ralph technique — filesystem is the durable record; no DB, no SQL, no native deps.
 type: plan
+status: done
+created: 2026-05-09
 ---
 
 # Plan: ralph-no-sqlite (file-only run artifacts)

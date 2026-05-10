@@ -2,6 +2,8 @@
 name: ci-quality-checks
 description: GitHub Actions CI workflow that gates PRs and pushes to main on the same checks `pnpm check` runs locally — typecheck, oxlint, oxfmt, vitest, build — with proper caching, concurrency, and security hardening.
 type: plan
+status: done
+created: 2026-05-09
 ---
 
 # Plan: CI quality checks via GitHub Actions
