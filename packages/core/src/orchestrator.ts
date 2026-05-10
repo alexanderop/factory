@@ -71,8 +71,10 @@ interface RunStepArgs {
 	readonly permissions: PermissionMode;
 }
 
-const factoryHarnessEnv = (runDir: string, cwd: string): Record<string, string> => ({
+const factoryHarnessEnv = (runDir: string, cwd: string, runId: RunId): Record<string, string> => ({
 	FACTORY_RUN_DIR: runDir,
+	FACTORY_RUN_ID: runId,
+	FACTORY_RUN_SHORT_ID: runId.slice(0, 8),
 	FACTORY_PROJECT_PLAN: `${cwd}/IMPLEMENTATION_PLAN.md`,
 });
 
@@ -562,7 +564,7 @@ const runStep = (
 						cwd,
 						idleTimeoutMs,
 						permissions,
-						env: factoryHarnessEnv(workspace.runDir, cwd),
+						env: factoryHarnessEnv(workspace.runDir, cwd, runId),
 					},
 					stepId,
 					stepOrd,

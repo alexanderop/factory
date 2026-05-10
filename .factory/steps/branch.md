@@ -10,10 +10,24 @@ clean branch off `main` for the work described in the plan.
 ## Read the plan
 
 The previous step wrote `$FACTORY_RUN_DIR/plan.md`. Read its frontmatter
-and use the `branch:` field verbatim as the branch name.
+and take the `branch:` field as the **base** branch name.
 
 If `$FACTORY_RUN_DIR/plan.md` is missing or has no `branch:` field, that
 is a bug — stop and surface what you saw.
+
+## Compute the branch name
+
+Append the run's short id so two runs of the same plan never collide:
+
+```
+<plan.branch>--$FACTORY_RUN_SHORT_ID
+```
+
+`$FACTORY_RUN_SHORT_ID` is exposed by the orchestrator (8-char prefix of
+the run id). Example: plan `branch: fix/effect-review-red` →
+`fix/effect-review-red--a3f9b210`.
+
+If `$FACTORY_RUN_SHORT_ID` is unset, that is a bug — stop and surface it.
 
 ## Pre-flight
 
@@ -23,8 +37,9 @@ dirty, stop and surface the diff — do not stash, discard, or commit.
 ## Create the branch
 
 1. `git checkout main`. (No `git pull` — this is a local pipeline.)
-2. `git checkout -b <branch>` if the branch does not exist, otherwise
-   `git checkout <branch>` to resume on it.
+2. `git checkout -b <branch>`. The suffix guarantees uniqueness, so
+   the branch should not already exist; if it does, stop and surface
+   that.
 
 That's it. The branch is empty until ralph commits to it.
 
