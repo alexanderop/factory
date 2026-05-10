@@ -2,7 +2,15 @@ import { Effect, Stream } from 'effect';
 import type { HarnessCapabilities } from '../capabilities.ts';
 import { HarnessExecError } from '../errors.ts';
 import { HarnessName } from '../ids.ts';
-import type { ExecOpts, ExecResult, Harness, HarnessAuth, HarnessEvent, PermissionMode } from '../types.ts';
+import type {
+	ExecOpts,
+	ExecResult,
+	Harness,
+	HarnessAuth,
+	HarnessAuthSpec,
+	HarnessEvent,
+	PermissionMode,
+} from '../types.ts';
 import { withAuth } from '../subprocess.ts';
 
 export interface ScriptedResponse {
@@ -22,6 +30,7 @@ export interface ScriptedHarnessOptions {
 	readonly capabilities?: HarnessCapabilities;
 	readonly defaultPermissions?: PermissionMode;
 	readonly onCall?: (opts: ExecOpts) => void;
+	readonly authSpec?: HarnessAuthSpec;
 }
 
 const ALL_MODES: ReadonlyArray<PermissionMode> = ['skip', 'accept-edits', 'read-only', 'prompt'];
@@ -56,7 +65,8 @@ export const scriptedHarness = <Name extends string>(
 		name,
 		capabilities,
 		defaultPermissions: options.defaultPermissions,
-		auth: { envVars: [] },
+		auth: options.authSpec ?? { envVars: [] },
+		currentAuth: { _tag: 'Inherit' },
 		withAuth: (auth: HarnessAuth) => withAuth(harness, auth),
 		exec: (opts: ExecOpts) =>
 			Effect.gen(function* () {

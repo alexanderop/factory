@@ -100,6 +100,7 @@ export interface Harness<Name extends string = string> {
 	/** Extra env injected during OTel passthrough (e.g. `CLAUDE_CODE_ENABLE_TELEMETRY=1`). */
 	readonly telemetryEnv?: Readonly<Record<string, string>>;
 	readonly auth: HarnessAuthSpec;
+	readonly currentAuth: HarnessAuth;
 	readonly withAuth: (auth: HarnessAuth) => Harness<Name>;
 	readonly exec: (
 		opts: ExecOpts,
@@ -249,6 +250,7 @@ export interface StepEntry {
 
 export interface Factory<Names extends string = string, StepIds extends string = never> {
 	readonly name: string;
+	readonly harnesses: ReadonlyArray<Harness>;
 	readonly step: <Id extends string>(
 		id: Exclude<Id, StepIds>,
 		source: string,

@@ -202,6 +202,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		defaultPermissions: config.defaultPermissions,
 		telemetryEnv: config.telemetryEnv,
 		auth: config.auth ?? { envVars: [] },
+		currentAuth: { _tag: 'Inherit' },
 		withAuth: (auth) => withAuth(harness, auth),
 		exec,
 		stream,
@@ -301,6 +302,7 @@ export const withAuth = <Name extends string>(
 
 	const wrappedHarness: Harness<Name> = {
 		...harness,
+		currentAuth: auth,
 		withAuth: (newAuth) => withAuth(harness, newAuth),
 		exec: (opts) =>
 			Effect.flatMap(annotateAndResolve, (authEnv) => harness.exec(mergedOpts(authEnv, opts))),
