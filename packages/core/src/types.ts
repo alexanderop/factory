@@ -7,6 +7,7 @@ import type {
 	HarnessExecError,
 	HarnessIdleTimeoutError,
 	HarnessSpawnError,
+	UnsupportedPermissionError,
 } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
 import type { PipelineName, RunId } from './ids.ts';
@@ -73,14 +74,14 @@ export interface Harness<Name extends string = string> {
 		opts: ExecOpts,
 	) => Effect.Effect<
 		ExecResult,
-		HarnessExecError | HarnessSpawnError | HarnessIdleTimeoutError,
+		HarnessExecError | HarnessSpawnError | HarnessIdleTimeoutError | UnsupportedPermissionError,
 		HarnessExecRequirements
 	>;
 	readonly stream: (
 		opts: ExecOpts,
 	) => Stream.Stream<
 		HarnessEvent,
-		HarnessSpawnError | HarnessIdleTimeoutError,
+		HarnessSpawnError | HarnessIdleTimeoutError | UnsupportedPermissionError,
 		HarnessExecRequirements
 	>;
 }

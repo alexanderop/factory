@@ -162,7 +162,11 @@ const streamHarnessIter = ({
 	display,
 }: StreamHarnessArgs): Effect.Effect<
 	IterStreamResult,
-	HarnessExecError | HarnessSpawnError | StepIdleTimeoutError | RunRecordingError,
+	| HarnessExecError
+	| HarnessSpawnError
+	| StepIdleTimeoutError
+	| RunRecordingError
+	| UnsupportedPermissionError,
 	CommandExecutor.CommandExecutor
 > =>
 	Effect.gen(function* () {

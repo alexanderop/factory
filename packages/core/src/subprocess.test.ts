@@ -1,8 +1,9 @@
 import { NodeContext } from '@effect/platform-node';
 import { describe, expect, it } from '@effect/vitest';
-import { deepStrictEqual } from '@effect/vitest/utils';
-import { Effect } from 'effect';
+import { assertInstanceOf, assertTrue, deepStrictEqual } from '@effect/vitest/utils';
+import { Cause, Effect, Exit } from 'effect';
 import type { HarnessCapabilities } from './capabilities.ts';
+import { UnsupportedPermissionError } from './errors.ts';
 import { createSubprocessHarness } from './subprocess.ts';
 import type { PermissionMode } from './types.ts';
 
@@ -47,6 +48,30 @@ describe('createSubprocessHarness', () => {
 		expect([...harness.capabilities.factory.permissions]).toEqual(['accept-edits', 'read-only']);
 		expect(harness.defaultPermissions).toBe('accept-edits');
 	});
+
+	it.effect(
+		'fails with UnsupportedPermissionError when exec is called with an unsupported permission mode',
+		() =>
+			Effect.gen(function* () {
+				const harness = createSubprocessHarness({
+					name: 'echo-harness',
+					bin: 'echo',
+					capabilities: baseCaps(['skip']),
+					defaultPermissions: 'skip',
+					buildArgs: () => [],
+				});
+
+				const exit = yield* Effect.exit(harness.exec({ prompt: 'hi', permissions: 'read-only' }));
+
+				assertTrue(Exit.isFailure(exit));
+				const failure = Cause.failureOption(exit.cause);
+				assertTrue(failure._tag === 'Some');
+				assertInstanceOf(failure.value, UnsupportedPermissionError);
+				deepStrictEqual([...failure.value.supported], ['skip']);
+				expect(failure.value.requested).toBe('read-only');
+				expect(failure.value.harness).toBe('echo-harness');
+			}).pipe(Effect.provide(NodeContext.layer)),
+	);
 
 	it('leaves defaultPermissions undefined when not configured', () => {
 		const harness = createSubprocessHarness({
