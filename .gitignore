@@ -3,6 +3,7 @@ dist
 .tsbuildinfo
 *.tsbuildinfo
 **/.factory/runs/
+.factory/last-prd
 .env
 .env.*
 !.env.example

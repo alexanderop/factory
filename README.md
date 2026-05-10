@@ -1,31 +1,18 @@
 # factory
 
-> **Experimental** — early scaffold. Nothing is implemented yet; see `docs/feature-specs/factory.md`.
+> **Experimental** — APIs and step shapes are still moving. The dogfood pipeline in this repo runs end-to-end; the published CLI is not stable yet. See `docs/feature-specs/factory.md` for the full design.
 
 `factory` is a TypeScript framework for building **software factories** — multi-step coding pipelines that run fully AFK on top of whichever coding harness you already have installed (`claude`, `codex`, `copilot`, ...).
 
-The headline pipeline is the classical spec-driven-development arc:
-
-```
-PRD → plan (slices) → ralph loop → verify → QA → simplify → PR
-```
-
 Each step is a markdown prompt (Flue-skill style), wired together in TypeScript. Harnesses are invoked as subprocesses, so you reuse the binary you already have on your `$PATH` — no new model SDK, no new API keys.
 
-## Demo (target API)
-
-```bash
-factory run sdd --prd ./feature.md
-```
+This repo dogfoods itself with a 4-step pipeline:
 
 ```
-✓ plan:     1 slice identified
-✓ ralph:    7 iters, tests green
-✓ verify:   matches PRD
-✓ qa:       typecheck + tests pass
-✓ simplify: 2 smells fixed
-→ PR opened: #142
+PRD → plan (slices into tickets) → branch → ralph (TDD loop, one commit per ticket) → pr
 ```
+
+The longer SDD arc (`plan → ralph → verify → qa → simplify → pr`) is the reference target API; see `@factory/steps-sdd` and the walkthrough below for the dogfood subset that's wired up today.
 
 ## Pipeline walkthrough
 
@@ -205,14 +192,38 @@ scripts/dogfood.ts   ← thin wrapper: one factoryDef.run() per invocation
    pnpm dogfood plans/<topic>.md
    ```
 
-   That's `tsx scripts/dogfood.ts plans/<topic>.md` — a one-line wrapper
-   around `factoryDef.run({ prd, cwd })`. Watch the OTel trace in the
-   Aspire Dashboard if you want a live view (`pnpm aspire:up`).
+   `dogfood` does a pre-flight (clean tree + on `main`), caches the PRD
+   path in `.factory/last-prd`, and calls `factoryDef.run({ prd, cwd })`.
+   Subsequent `pnpm dogfood` (no args) re-run against the cached PRD.
+
+   Want the trace dashboard up at the same time? `pnpm dogfood:up` brings
+   up Aspire and runs the pipeline in one shot. Watch the events stream
+   live in another pane with `pnpm dogfood:tail`.
 
 4. **Review the PR.** The pipeline ends by opening one PR with one
    commit per ticket, titled by the plan's `title:` and bodied with the
    ticket checklist + test plan. Merge or push back to ralph by
    committing follow-up work and re-running.
+
+5. **Tidy up.** After merging a few dogfood PRs, drop the locally-merged
+   branches:
+
+   ```bash
+   pnpm dogfood:clean
+   ```
+
+### Optional: bare `factory` command
+
+If you want to type `factory` instead of `pnpm factory`, link the CLI
+once into your global pnpm bin:
+
+```bash
+pnpm setup:cli   # pnpm --dir packages/cli link --global
+```
+
+After that, `factory <args>` works from anywhere. The link points at the
+workspace source (`packages/cli/src/main.ts`), so local changes are
+picked up live.
 
 ### What the agent reads (and why)
 
@@ -257,15 +268,24 @@ Only edit files under src/. Run `pnpm test` between iterations.
 ```
 
 ```ts
-// .factory/factory.ts
+// .factory/factory.ts (this repo's dogfood pipeline)
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { factory } from '@factory/core';
+import { claudeCode } from '@factory/harness-claude-code';
 
-export default factory({ name: 'sdd', harness: 'claude-code' })
-  .step('plan', './steps/plan.md')
-  .step('ralph', './steps/ralph.md', { harness: 'codex' })
-  .step('verify', './steps/verify.md')
-  .step('qa', './steps/qa.md')
-  .step('simplify', './steps/simplify.md');
+const here = dirname(fileURLToPath(import.meta.url));
+const step = (name: string): string => resolve(here, 'steps', `${name}.md`);
+
+export default factory({
+  name: 'effect-review',
+  harness: 'claude-code',
+  harnesses: [claudeCode],
+})
+  .step('plan', step('plan'))
+  .step('branch', step('branch'))
+  .step('ralph', step('ralph'))
+  .step('pr', step('pr'));
 ```
 
 ## Observability
@@ -275,9 +295,10 @@ OpenTelemetry is wired in from day one. Default exporter is OTLP/gRPC at `localh
 For local debugging, run the standalone Aspire Dashboard:
 
 ```bash
-docker run --rm -it -p 18888:18888 -p 4317:18889 \
-  mcr.microsoft.com/dotnet/aspire-dashboard:latest
-# open http://localhost:18888 and run `factory run ...`
+pnpm aspire:up        # starts the dashboard at http://localhost:18888
+pnpm dogfood plans/<topic>.md
+# or, in one shot:
+pnpm dogfood:up plans/<topic>.md
 ```
 
 Send to your production backend instead:
@@ -285,7 +306,7 @@ Send to your production backend instead:
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io \
 OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=$KEY" \
-factory run sdd --prd ./x.md
+pnpm dogfood plans/<topic>.md
 ```
 
 Disable with `--no-otel` or `OTEL_SDK_DISABLED=true`.
@@ -303,4 +324,4 @@ Disable with `--no-otel` or `OTEL_SDK_DISABLED=true`.
 
 ## Status
 
-v0 scaffold only. See [`docs/feature-specs/factory.md`](docs/feature-specs/factory.md) for the full design.
+The dogfood pipeline (`plan → branch → ralph → pr`) runs end-to-end against PRDs in `plans/`. The published CLI, the SDD reference steps (`@factory/steps-sdd`), and the public step API are still moving. See [`docs/feature-specs/factory.md`](docs/feature-specs/factory.md) for the full design.

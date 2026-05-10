@@ -21,7 +21,11 @@
 		"aspire:logs": "docker logs -f factory-aspire",
 		"example": "pnpm --filter sdd-quickstart factory run sdd --prd ./feature.md",
 		"factory": "tsx packages/cli/src/main.ts",
-		"dogfood": "tsx scripts/dogfood.ts"
+		"setup:cli": "pnpm --dir packages/cli link --global",
+		"dogfood": "tsx scripts/dogfood.ts",
+		"dogfood:up": "pnpm aspire:up || true && pnpm dogfood",
+		"dogfood:tail": "tail -f .factory/runs/latest/events.jsonl | jq -c .",
+		"dogfood:clean": "git branch --merged main --format='%(refname:short)' | grep -E '^(feat|fix|refactor|test|docs|chore)/' | xargs -r git branch -d || true"
 	},
 	"dependencies": {
 		"@factory/core": "workspace:*",
