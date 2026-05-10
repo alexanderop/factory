@@ -7,6 +7,13 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@factory/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@factory/harness-claude-code':
+        specifier: workspace:*
+        version: link:packages/harness-claude-code
     devDependencies:
       '@effect/vitest':
         specifier: ^0.29.0
