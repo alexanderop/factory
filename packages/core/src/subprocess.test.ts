@@ -268,7 +268,7 @@ describe('withAuth', () => {
 		Effect.gen(function* () {
 			const harness = printEnvHarness();
 			const authed1 = withAuth(harness, { _tag: 'ApiKey', value: Redacted.make('key-1') });
-			const authed2 = authed1.withAuth!({ _tag: 'ApiKey', value: Redacted.make('key-2') });
+			const authed2 = authed1.withAuth({ _tag: 'ApiKey', value: Redacted.make('key-2') });
 			const result = yield* authed2.exec({
 				prompt: `process.stdout.write(process.env.TEST_API_KEY ?? 'NOT_SET')`,
 				permissions: 'skip',

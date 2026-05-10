@@ -23,6 +23,10 @@ export const codex = createSubprocessHarness({
 	name: 'codex',
 	bin: 'codex',
 	defaultPermissions: 'skip',
+	auth: {
+		envVars: [{ name: 'OPENAI_API_KEY', kind: 'api-key', description: 'OpenAI API key' }],
+		extraEnv: [{ name: 'OPENAI_BASE_URL', description: 'OpenAI API base URL override' }],
+	},
 	capabilities: {
 		loadSession: true,
 		mcp: { http: false, sse: false },

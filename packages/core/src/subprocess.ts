@@ -201,7 +201,7 @@ export const createSubprocessHarness = <Name extends string, const P extends Per
 		capabilities: config.capabilities,
 		defaultPermissions: config.defaultPermissions,
 		telemetryEnv: config.telemetryEnv,
-		auth: config.auth,
+		auth: config.auth ?? { envVars: [] },
 		withAuth: (auth) => withAuth(harness, auth),
 		exec,
 		stream,
@@ -225,19 +225,11 @@ const buildResolveAuthEnv = <Name extends string>(
 
 		case 'ApiKey': {
 			const spec = harness.auth;
-			if (!spec || spec.envVars.length === 0) {
-				return Effect.fail(
-					new HarnessAuthError({
-						message: `harness '${harness.name}' has no auth spec; ApiKey requires at least one envVar entry`,
-						harness: HarnessName.make(harness.name),
-					}),
-				);
-			}
 			const firstVar = spec.envVars[0];
 			if (firstVar === undefined) {
 				return Effect.fail(
 					new HarnessAuthError({
-						message: `harness '${harness.name}' auth spec has no envVar entries`,
+						message: `harness '${harness.name}' has no auth spec envVars; ApiKey requires at least one entry`,
 						harness: HarnessName.make(harness.name),
 					}),
 				);

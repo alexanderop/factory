@@ -16,6 +16,15 @@ const helpFixture = join(import.meta.dirname, '..', '__fixtures__', 'help.txt');
 const live = process.env.HARNESS_LIVE === '1';
 
 describe('claude-code harness', () => {
+	it('declares an auth spec', () => {
+		expect(claudeCode.auth.envVars.map(({ name, kind }) => ({ name, kind }))).toEqual([
+			{ name: 'ANTHROPIC_AUTH_TOKEN', kind: 'bearer' },
+			{ name: 'ANTHROPIC_API_KEY', kind: 'api-key' },
+			{ name: 'CLAUDE_CODE_OAUTH_TOKEN', kind: 'oauth-token' },
+		]);
+		expect(claudeCode.auth.extraEnv?.map(({ name }) => name)).toEqual(['ANTHROPIC_BASE_URL']);
+	});
+
 	it('declares its expected supported modes', () => {
 		expect(claudeCode.capabilities.factory.permissions.toSorted()).toEqual([
 			'accept-edits',

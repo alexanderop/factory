@@ -16,6 +16,15 @@ const helpFixture = join(import.meta.dirname, '..', '__fixtures__', 'help.txt');
 const live = process.env.HARNESS_LIVE === '1';
 
 describe('copilot harness', () => {
+	it('declares an auth spec', () => {
+		expect(copilot.auth.envVars.map(({ name, kind }) => ({ name, kind }))).toEqual([
+			{ name: 'GH_TOKEN', kind: 'pat' },
+			{ name: 'GITHUB_TOKEN', kind: 'pat' },
+		]);
+		expect(copilot.auth.envVars.some((v) => v.kind === 'api-key')).toBe(false);
+		expect(copilot.auth.extraEnv).toBeUndefined();
+	});
+
 	it('declares its expected supported modes', () => {
 		expect(copilot.capabilities.factory.permissions.toSorted()).toEqual(['accept-edits', 'skip']);
 	});

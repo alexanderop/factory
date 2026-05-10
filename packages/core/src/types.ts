@@ -99,8 +99,8 @@ export interface Harness<Name extends string = string> {
 	readonly defaultPermissions?: PermissionMode;
 	/** Extra env injected during OTel passthrough (e.g. `CLAUDE_CODE_ENABLE_TELEMETRY=1`). */
 	readonly telemetryEnv?: Readonly<Record<string, string>>;
-	readonly auth?: HarnessAuthSpec;
-	readonly withAuth?: (auth: HarnessAuth) => Harness<Name>;
+	readonly auth: HarnessAuthSpec;
+	readonly withAuth: (auth: HarnessAuth) => Harness<Name>;
 	readonly exec: (
 		opts: ExecOpts,
 	) => Effect.Effect<
