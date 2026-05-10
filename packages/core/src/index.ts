@@ -11,6 +11,7 @@ export {
 export {
 	ConfigLoadError,
 	type FactoryError,
+	HarnessAuthError,
 	HarnessExecError,
 	HarnessNotFoundError,
 	HarnessSpawnError,
@@ -85,7 +86,7 @@ export {
 	UntilEvaluator,
 	type UntilEvaluatorService,
 } from './services/UntilEvaluator.ts';
-export { createSubprocessHarness, type SubprocessHarnessConfig } from './subprocess.ts';
+export { authKindStr, createSubprocessHarness, type SubprocessHarnessConfig, withAuth } from './subprocess.ts';
 export { PermissionMode } from './types.ts';
 export type {
 	ExecOpts,
@@ -94,6 +95,10 @@ export type {
 	FactoryEvent,
 	FactoryOptions,
 	Harness,
+	HarnessAuth,
+	HarnessAuthEnvVar,
+	HarnessAuthExtraVar,
+	HarnessAuthSpec,
 	HarnessEvent,
 	HarnessExecRequirements,
 	HarnessTokenUsage,

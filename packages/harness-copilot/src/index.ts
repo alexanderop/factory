@@ -21,6 +21,12 @@ export const copilot = createSubprocessHarness({
 	name: 'copilot',
 	bin: 'copilot',
 	defaultPermissions: 'skip',
+	auth: {
+		envVars: [
+			{ name: 'GH_TOKEN', kind: 'pat', description: 'GitHub personal access token' },
+			{ name: 'GITHUB_TOKEN', kind: 'pat', description: 'GitHub token (fallback)' },
+		],
+	},
 	capabilities: {
 		loadSession: false,
 		mcp: { http: false, sse: false },

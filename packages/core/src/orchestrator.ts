@@ -24,6 +24,7 @@ import {
 	StepMaxItersError,
 	UnsupportedPermissionError,
 	type FactoryError,
+	type HarnessAuthError,
 	type HarnessSpawnError,
 	type RunRecordingError,
 } from './errors.ts';
@@ -164,7 +165,7 @@ const streamHarnessIter = ({
 	display,
 }: StreamHarnessArgs): Effect.Effect<
 	IterStreamResult,
-	HarnessExecError | HarnessSpawnError | StepIdleTimeoutError | RunRecordingError,
+	HarnessAuthError | HarnessExecError | HarnessSpawnError | StepIdleTimeoutError | RunRecordingError,
 	CommandExecutor.CommandExecutor
 > =>
 	Effect.gen(function* () {

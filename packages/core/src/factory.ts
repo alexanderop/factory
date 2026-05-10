@@ -78,6 +78,7 @@ export function factory<const Hs extends ReadonlyArray<Harness>>(
 
 	const make = <StepIds extends string>(): Factory<Names, StepIds> => ({
 		name: opts.name,
+		harnesses: opts.harnesses ?? [],
 		step<Id extends string>(
 			id: Exclude<Id, StepIds>,
 			source: string,

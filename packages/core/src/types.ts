@@ -1,9 +1,10 @@
 import type { CommandExecutor } from '@effect/platform';
-import { Schema, type Effect, type Stream } from 'effect';
+import { Schema, type Duration, type Effect, type Redacted, type Stream } from 'effect';
 import type { HarnessCapabilities } from './capabilities.ts';
 import { StepRequirements } from './capabilities.ts';
 import type {
 	FactoryError,
+	HarnessAuthError,
 	HarnessExecError,
 	HarnessSpawnError,
 	StepIdleTimeoutError,
@@ -13,6 +14,35 @@ import type { PipelineName, RunId } from './ids.ts';
 import { PermissionMode } from './permissionMode.ts';
 
 export { PermissionMode };
+
+export interface HarnessAuthEnvVar {
+	readonly name: string;
+	readonly kind: 'api-key' | 'oauth-token' | 'bearer' | 'pat';
+	readonly description: string;
+}
+
+export interface HarnessAuthExtraVar {
+	readonly name: string;
+	readonly description: string;
+}
+
+export interface HarnessAuthSpec {
+	readonly envVars: ReadonlyArray<HarnessAuthEnvVar>;
+	readonly extraEnv?: ReadonlyArray<HarnessAuthExtraVar>;
+}
+
+export type HarnessAuth =
+	| { readonly _tag: 'Inherit' }
+	| { readonly _tag: 'ApiKey'; readonly value: Redacted.Redacted }
+	| {
+			readonly _tag: 'Env';
+			readonly env: Readonly<Record<string, Redacted.Redacted | string>>;
+	  }
+	| {
+			readonly _tag: 'Helper';
+			readonly fetch: Effect.Effect<Readonly<Record<string, string>>, HarnessAuthError>;
+			readonly ttl?: Duration.DurationInput;
+	  };
 
 export interface ExecOpts {
 	readonly prompt: string;
@@ -69,18 +99,21 @@ export interface Harness<Name extends string = string> {
 	readonly defaultPermissions?: PermissionMode;
 	/** Extra env injected during OTel passthrough (e.g. `CLAUDE_CODE_ENABLE_TELEMETRY=1`). */
 	readonly telemetryEnv?: Readonly<Record<string, string>>;
+	readonly auth: HarnessAuthSpec;
+	readonly currentAuth: HarnessAuth;
+	readonly withAuth: (auth: HarnessAuth) => Harness<Name>;
 	readonly exec: (
 		opts: ExecOpts,
 	) => Effect.Effect<
 		ExecResult,
-		HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
+		HarnessAuthError | HarnessExecError | HarnessSpawnError | StepIdleTimeoutError,
 		HarnessExecRequirements
 	>;
 	readonly stream: (
 		opts: ExecOpts,
 	) => Stream.Stream<
 		HarnessEvent,
-		HarnessSpawnError | StepIdleTimeoutError,
+		HarnessAuthError | HarnessSpawnError | StepIdleTimeoutError,
 		HarnessExecRequirements
 	>;
 }
@@ -217,6 +250,7 @@ export interface StepEntry {
 
 export interface Factory<Names extends string = string, StepIds extends string = never> {
 	readonly name: string;
+	readonly harnesses: ReadonlyArray<Harness>;
 	readonly step: <Id extends string>(
 		id: Exclude<Id, StepIds>,
 		source: string,

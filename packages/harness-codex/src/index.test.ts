@@ -16,6 +16,13 @@ const helpFixture = join(import.meta.dirname, '..', '__fixtures__', 'help.txt');
 const live = process.env.HARNESS_LIVE === '1';
 
 describe('codex harness', () => {
+	it('declares an auth spec', () => {
+		expect(codex.auth.envVars.map(({ name, kind }) => ({ name, kind }))).toEqual([
+			{ name: 'OPENAI_API_KEY', kind: 'api-key' },
+		]);
+		expect(codex.auth.extraEnv?.map(({ name }) => name)).toEqual(['OPENAI_BASE_URL']);
+	});
+
 	it('declares its expected supported modes', () => {
 		expect(codex.capabilities.factory.permissions.toSorted()).toEqual([
 			'accept-edits',

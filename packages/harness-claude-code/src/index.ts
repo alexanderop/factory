@@ -33,6 +33,18 @@ export const claudeCode = createSubprocessHarness({
 	name: 'claude-code',
 	bin: 'claude',
 	defaultPermissions: 'skip',
+	auth: {
+		envVars: [
+			{ name: 'ANTHROPIC_AUTH_TOKEN', kind: 'bearer', description: 'Anthropic bearer token' },
+			{ name: 'ANTHROPIC_API_KEY', kind: 'api-key', description: 'Anthropic API key' },
+			{
+				name: 'CLAUDE_CODE_OAUTH_TOKEN',
+				kind: 'oauth-token',
+				description: 'Claude Code OAuth token',
+			},
+		],
+		extraEnv: [{ name: 'ANTHROPIC_BASE_URL', description: 'Anthropic API base URL override' }],
+	},
 	capabilities: {
 		loadSession: true,
 		mcp: { http: true, sse: true },
