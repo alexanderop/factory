@@ -27,6 +27,7 @@
 		"dogfood": "tsx scripts/dogfood.ts",
 		"dogfood:up": "pnpm aspire:up || true && pnpm dogfood",
 		"dogfood:tail": "tail -f .factory/runs/latest/events.jsonl | jq -c .",
+		"dogfood:remote": "sh -c 'gh workflow run factory --ref main -f prd=\"$1\"' --",
 		"dogfood:clean": "git branch --merged main --format='%(refname:short)' | grep -E '^(feat|fix|refactor|test|docs|chore)/' | xargs -r git branch -d || true"
 	},
 	"dependencies": {
