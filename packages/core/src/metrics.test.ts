@@ -1,14 +1,9 @@
 import { describe, it } from '@effect/vitest';
 import { assertTrue, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Metric, Ref } from 'effect';
+import { Cause, Effect, Exit, Metric } from 'effect';
 import { runFactoryEffect } from './orchestrator.ts';
-import {
-	type DisplayEntry,
-	makeTestLayer,
-	OtelTestLayer,
-	scriptedHarness,
-} from './testing/index.ts';
-import type { FactoryEvent, HarnessEvent } from './types.ts';
+import { cycledHarness, makeTestRig, OtelTestLayer } from './testing/index.ts';
+import type { HarnessEvent } from './types.ts';
 
 const findMetric = (
 	pairs: ReadonlyArray<{
@@ -32,13 +27,8 @@ const findMetric = (
 describe('factory metrics', () => {
 	it.effect('emits runs_total and run_duration_ms with pipeline + outcome tags', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
-				harnesses: [scriptedHarness('claude-code', [{ stdout: 'iter-1\n' }])],
+			const { layer } = makeTestRig({
+				harnesses: [cycledHarness('claude-code', [{ stdout: 'iter-1\n' }])],
 				stepFiles: new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']]),
 			});
 
@@ -79,9 +69,6 @@ describe('factory metrics', () => {
 
 	it.effect('emits tool_calls_total + tool_call_duration_ms per tool', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
 			const script: ReadonlyArray<HarnessEvent> = [
 				{ type: 'tool.start', id: 't1', name: 'Bash', input: { command: 'ls' } },
 				{ type: 'tool.end', id: 't1', ok: true, output: 'a\n' },
@@ -97,10 +84,8 @@ describe('factory metrics', () => {
 				},
 			];
 
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
-				harnesses: [scriptedHarness('claude-code', [{ events: script }])],
+			const { layer } = makeTestRig({
+				harnesses: [cycledHarness('claude-code', [{ events: script }])],
 				stepFiles: new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']]),
 			});
 
@@ -137,13 +122,8 @@ describe('factory metrics', () => {
 
 	it.effect('emits errors_total tagged with the FactoryError _tag on failure', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
-				harnesses: [scriptedHarness('claude-code', [{ stdout: 'nope\n' }])],
+			const { layer } = makeTestRig({
+				harnesses: [cycledHarness('claude-code', [{ stdout: 'nope\n' }])],
 				stepFiles: new Map([
 					[
 						'./steps/ralph.md',
