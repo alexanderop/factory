@@ -1,6 +1,7 @@
 import { NodeContext } from '@effect/platform-node';
-import { Layer, Ref } from 'effect';
+import { Cause, Effect, Exit, Layer, Predicate, Ref } from 'effect';
 import { CapabilityMismatchError, type HarnessCapabilities } from '../capabilities.ts';
+import type { HarnessOtelEnvArgs } from '../harnessOtelEnv.ts';
 import {
 	ConfigLoadError,
 	HarnessExecError,
@@ -19,6 +20,7 @@ import {
 	UntilEvalError,
 } from '../errors.ts';
 import { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
+import type { RoleFinding } from '../review/finding.ts';
 import { type DisplayEntry, SilentDisplay } from '../services/Display.ts';
 import { noopEventEmitter, recordingEventEmitter } from '../services/EventEmitter.ts';
 import { harnessRegistryLayer } from '../services/HarnessRegistry.ts';
@@ -27,7 +29,12 @@ import { InMemoryRunWorkspace } from '../services/RunWorkspace.ts';
 import { InMemoryStepLoader } from '../services/StepLoader.ts';
 import { scriptedUntilEvaluator } from '../services/UntilEvaluator.ts';
 import type { ExecOpts, FactoryEvent, Harness, PermissionMode, StepEntry } from '../types.ts';
-import { scriptedHarness } from './scriptedHarness.ts';
+import {
+	type ScriptedHarnessOptions,
+	type ScriptedResponder,
+	type ScriptedResponse,
+	scriptedHarness,
+} from './scriptedHarness.ts';
 
 const DEFAULT_RUN_ID = RunId.make('test-run');
 const DEFAULT_STEP_ID = StepId.make('plan');
@@ -141,17 +148,6 @@ export const makeEmptyCapabilities = (): HarnessCapabilities => ({
 });
 
 // ---------- harnessOtelEnv args ----------
-
-export interface HarnessOtelEnvArgs {
-	readonly harness: string;
-	readonly runId: RunId;
-	readonly stepId: StepId;
-	readonly iter: number;
-	readonly traceId: string;
-	readonly spanId: string;
-	readonly sampled: boolean;
-	readonly extraEnv?: Readonly<Record<string, string>>;
-}
 
 export const makeHarnessOtelEnvArgs = (
 	overrides?: Partial<HarnessOtelEnvArgs>,
@@ -383,4 +379,132 @@ export const makeTestLayer = (options: MakeTestLayerOptions = {}) => {
 		scriptedUntilEvaluator.layer(options.verdicts ?? [true]),
 		workspaceLayer,
 	).pipe(Layer.provideMerge(NodeContext.layer));
+};
+
+// ---------- The canonical test rig ----------
+//
+// `makeTestRig` is the preferred entry point for new tests. It builds the
+// same layer as `makeTestLayer` but also returns the capture refs so the
+// test body doesn't have to allocate them. Use the `events` / `display`
+// Effects to read out captured state at the end of the test.
+
+export interface TestRig {
+	readonly layer: ReturnType<typeof makeTestLayer>;
+	readonly events: Effect.Effect<ReadonlyArray<FactoryEvent>>;
+	readonly display: Effect.Effect<ReadonlyArray<DisplayEntry>>;
+	readonly eventsRef: Ref.Ref<ReadonlyArray<FactoryEvent>>;
+	readonly displayRef: Ref.Ref<ReadonlyArray<DisplayEntry>>;
+}
+
+export const makeTestRig = (options: MakeTestLayerOptions = {}): TestRig => {
+	const displayRef = options.displayRef ?? Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+	const eventsRef = options.eventsRef ?? Ref.unsafeMake<ReadonlyArray<FactoryEvent>>([]);
+	const layer = makeTestLayer({ ...options, displayRef, eventsRef });
+	return {
+		layer,
+		events: Ref.get(eventsRef),
+		display: Ref.get(displayRef),
+		eventsRef,
+		displayRef,
+	};
+};
+
+// ---------- Two-sided scripted harness: capture inbound calls ----------
+
+export interface CapturingScriptedHarness<Name extends string> {
+	readonly harness: Harness<Name>;
+	/** Read out every `ExecOpts` the orchestrator passed, in call order. */
+	readonly calls: Effect.Effect<ReadonlyArray<ExecOpts>>;
+}
+
+export const capturingScripted = <Name extends string>(
+	name: Name,
+	responses: ReadonlyArray<ScriptedResponse> | ScriptedResponder,
+	options: ScriptedHarnessOptions = {},
+): CapturingScriptedHarness<Name> => {
+	const callsRef = Ref.unsafeMake<ReadonlyArray<ExecOpts>>([]);
+	const userOnCallEffect = options.onCallEffect;
+	const harness = scriptedHarness(name, responses, {
+		...options,
+		onCallEffect: (opts) =>
+			Effect.gen(function* () {
+				yield* Ref.update(callsRef, (xs) => [...xs, opts]);
+				if (userOnCallEffect) yield* userOnCallEffect(opts);
+			}),
+	});
+	return { harness, calls: Ref.get(callsRef) };
+};
+
+// ---------- Exit narrowing helper ----------
+
+/**
+ * Asserts that an Effect `Exit` is a typed failure containing an instance of
+ * `ErrorClass`, returning the narrowed error for further field assertions.
+ * Replaces the four-line `Exit.isFailure` + `Cause.failureOption` + `_tag`
+ * + `assertInstanceOf` dance.
+ *
+ *   const err = assertExitFailedWith(exit, CapabilityMismatchError);
+ *   deepStrictEqual(err.missing, ['session.resume']);
+ */
+export const assertExitFailedWith = <A, E, EClass extends E>(
+	exit: Exit.Exit<A, E>,
+	ErrorClass: new (...args: never[]) => EClass,
+): EClass => {
+	if (!Exit.isFailure(exit)) {
+		throw new Error(`expected Exit.Failure, got Success: ${JSON.stringify(exit, null, 2)}`);
+	}
+	const failure = Cause.failureOption(exit.cause);
+	if (failure._tag !== 'Some') {
+		throw new Error(
+			`expected typed failure, got Cause '${exit.cause._tag}': ${String(exit.cause)}`,
+		);
+	}
+	if (!(failure.value instanceof ErrorClass)) {
+		const got =
+			Predicate.isRecord(failure.value) && typeof failure.value._tag === 'string'
+				? failure.value._tag
+				: typeof failure.value;
+		throw new Error(`expected ${ErrorClass.name}, got ${got}: ${String(failure.value)}`);
+	}
+	return failure.value;
+};
+
+// ---------- Review-step helpers ----------
+
+export interface ReviewRoleFindingsArgs {
+	readonly roleId: string;
+	readonly findings: ReadonlyArray<RoleFinding>;
+	/** Step ord (default `0` — most review tests use a single review step). */
+	readonly stepOrd?: number;
+	/** Step id (default `'review'`). */
+	readonly stepId?: string;
+	/** Override the stdout the harness emits. Default: `'<roleId> done\n'`. */
+	readonly stdout?: string;
+}
+
+/**
+ * Build a `ScriptedResponse` that simulates a review role writing its
+ * findings to the conventional path. Encapsulates the orchestrator's
+ * `<runDir>/steps/<ord>-<stepId>/roles/<roleId>/findings.json` convention,
+ * so tests don't hard-code the path.
+ *
+ *   routedHarness('claude-code', (opts) =>
+ *     reviewRoleFindings({
+ *       roleId: opts.env?.FACTORY_ROLE_ID ?? 'unknown',
+ *       findings: [{ severity: 'P1', file: 'src/auth.ts', message: '…' }],
+ *     }),
+ *   )
+ */
+export const reviewRoleFindings = (args: ReviewRoleFindingsArgs): ScriptedResponse => {
+	const ord = String(args.stepOrd ?? 0).padStart(2, '0');
+	const stepId = args.stepId ?? 'review';
+	return {
+		stdout: args.stdout ?? `${args.roleId} done\n`,
+		writes: [
+			{
+				path: `steps/${ord}-${stepId}/roles/${args.roleId}/findings.json`,
+				content: JSON.stringify({ findings: args.findings }),
+			},
+		],
+	};
 };

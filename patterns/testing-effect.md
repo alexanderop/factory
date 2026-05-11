@@ -4,10 +4,133 @@
 `vitest` is the fallback for tests with no Effect body (pure-data assertions,
 type-level checks, etc.).
 
-> Source of truth: `packages/core/src/orchestrator.test.ts` (full pattern in
-> use), `packages/core/src/loader.test.ts` (`it.scoped` + temp dirs),
-> `packages/core/src/testing/` (the test doubles), `repos/effect/packages/vitest/`
-> for `it.effect`/`it.scoped`/`it.layer`/`@effect/vitest/utils`.
+> Source of truth: `packages/core/src/runWorkspace.test.ts` (the canonical
+> integration shape — see "Canonical test shape" below),
+> `packages/core/src/orchestrator.test.ts` (`it.layer` + per-test variation),
+> `packages/core/src/testing/` (the test doubles, helpers, and rig),
+> `repos/effect/packages/vitest/` for `it.effect`/`it.scoped`/`it.layer`/`@effect/vitest/utils`.
+
+## Canonical test shape
+
+The default shape for any new orchestrator-level test. Mirrors
+`runWorkspace.test.ts:319-419` (the crash-and-resume e2e) — that's the
+template. If a test doesn't look like this, the burden is on the test to
+justify why.
+
+```ts
+import { describe, it } from '@effect/vitest';
+import { strictEqual } from '@effect/vitest/utils';
+import { Effect } from 'effect';
+import {
+  assertExitFailedWith,
+  capturingScripted,
+  cycledHarness,
+  makeTestRig,
+  reviewRoleFindings,
+} from './testing/index.ts';
+
+it.effect('end-to-end: <user-visible behavior>', () =>
+  Effect.gen(function* () {
+    // 1. Build a two-sided harness (capture inputs, script outputs).
+    const { harness, calls } = capturingScripted('claude-code', [
+      { stdout: 'plan\n' },
+      { stdout: 'iter-1\n', writes: [{ path: 'out.json', content: '{}' }] },
+    ]);
+
+    // 2. Build the rig — refs for events/display come for free.
+    const { layer, events } = makeTestRig({ harnesses: [harness] });
+
+    // 3. Run the program through to its Exit.
+    const exit = yield* runFactoryEffect(/* … */).pipe(Effect.provide(layer), Effect.exit);
+
+    // 4. Assert on user-visible side effects:
+    //    - Exit shape (success / failure class)
+    //    - Captured event types
+    //    - Captured call sequence
+    //    - Files on disk (when `LiveRunWorkspace` is in use)
+    assertExitFailedWith(exit, StepMaxItersError);
+    deepStrictEqual(
+      (yield* events).map((e) => e.type),
+      ['run.start', 'step.start' /* … */],
+    );
+    deepStrictEqual(
+      (yield* calls).map((c) => c.permissions),
+      ['skip', 'skip'],
+    );
+  }),
+);
+```
+
+Five rules:
+
+1. **One mockable seam: the harness.** Everything else (workspace, step
+   loader, until evaluator) uses the in-memory test impl by default. The
+   harness is the only thing scripted per test.
+2. **Capture inputs, script outputs.** `capturingScripted` gives you both —
+   reach for it instead of allocating a `Ref` and wiring `onCall` by hand.
+3. **Read refs at the end of the test, not mid-flight.** `events` and `calls`
+   are `Effect`s; `yield*` them after the program completes.
+4. **Assert on user-visible side effects.** Exit shape, event types in order,
+   call sequence, file contents. Don't assert on display strings unless the
+   test is specifically about display output.
+5. **One test per behavior, not per phase.** Don't write "Phase A / Phase B"
+   sub-tests of one underlying behaviour — write one cohesive test that
+   asserts on every relevant aspect of that behaviour.
+
+## Choosing a harness factory
+
+Reach for the named factory whose intent matches the test, not the bare
+`scriptedHarness` god-fake. Each name documents what the test is verifying:
+
+| Factory                              | Use when…                                                                                        | Defined in                                     |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `cycledHarness(name, [r1, r2, …])`   | The orchestrator makes N sequential calls in a known order.                                      | `packages/core/src/testing/scriptedHarness.ts` |
+| `routedHarness(name, responder)`     | Calls fan out concurrently (review roles, parallel steps) — pick the response by inbound `opts`. | `packages/core/src/testing/scriptedHarness.ts` |
+| `echoHarness(name)`                  | The test verifies _what was sent_ (cwd / env / permissions / prompt), not what came back.        | `packages/core/src/testing/scriptedHarness.ts` |
+| `silentHarness(name)`                | The test verifies the orchestrator _reached_ this step at all (pipeline shape, routing).         | `packages/core/src/testing/scriptedHarness.ts` |
+| `flakeyHarness(name, { failAfter })` | The test exercises resume / retry / partial-failure behaviour.                                   | `packages/core/src/testing/scriptedHarness.ts` |
+| `capturingScripted(name, …)`         | Wrap any of the above to also capture the inbound `ExecOpts` for assertion at end-of-test.       | `packages/core/src/testing/factories.ts`       |
+
+`scriptedHarness` itself remains as the underlying builder; prefer the
+named factories so the `import` line and call site read as documentation.
+
+### Per-response options
+
+Every response in a `cycledHarness` / `routedHarness` script can carry:
+
+- `delay: Duration.DurationInput` — sleep before the response is materialised.
+  Use to test interruption, cancellation, ordering against concurrent fan-out.
+- `events: ReadonlyArray<HarnessEvent>` — emit a specific event sequence
+  (followed by an implicit `exit`). Craft a custom sequence ending with a
+  non-zero `exit` to simulate mid-stream crash.
+- `writes: ReadonlyArray<ScriptedWrite>` — materialise files on disk before
+  the `exit` event. Paths are resolved against `env.FACTORY_RUN_DIR` (or
+  `opts.cwd`) so tests don't have to know absolute paths.
+
+For review roles: don't hard-code `steps/00-review/roles/<id>/findings.json`
+in tests. Use `reviewRoleFindings({ roleId, findings })` — the helper
+encapsulates the orchestrator's path convention.
+
+### Exhaust mode
+
+`cycledHarness('claude-code', [resp], { exhaust: 'error' })` throws if the
+orchestrator makes more calls than scripted. Use this to catch silent
+"orchestrator iterated past the script" bugs that the default `'cycle'`
+mode would mask. Default is `'cycle'` for backwards compatibility.
+
+## Garbage-output testing
+
+Real harnesses fail in ways that real-harness e2e doesn't reproduce
+reliably: malformed JSON in `findings.json`, exit 0 with empty stdout,
+partial writes (file exists, half-written), stderr-only output with no
+events, exit mid-stream after some events.
+
+This is _uniquely the scripted layer's job_ — build a small suite asserting
+the orchestrator survives each malformation. See
+`packages/core/src/orchestrator-malformed.test.ts` for the canonical set.
+Pattern: craft a deliberately broken `ScriptedResponse` and assert the
+orchestrator's failure mode (typed error class, recorded step status,
+event types) rather than asserting it succeeds.
 
 ## The default: `it.effect`
 
@@ -156,6 +279,20 @@ Pick `assertFailure` when the full `Cause` is meaningful; pick
 `assertInstanceOf` + field spot-checks when you only need "the right class
 came out, with the right `missing` list."
 
+For the common "expect this `Exit` to be a typed failure of class `X` and
+narrow the value for further field checks" pattern, prefer
+`assertExitFailedWith` from `testing/factories.ts`:
+
+```ts
+import { assertExitFailedWith } from './testing/index.ts';
+
+const err = assertExitFailedWith(exit, CapabilityMismatchError);
+deepStrictEqual(err.missing, ['session.resume']);
+```
+
+Replaces the four-line `Exit.isFailure` + `Cause.failureOption` + `_tag` +
+`assertInstanceOf` dance.
+
 `vitest`'s own `expect` still works inside `it.effect` — use it freely for
 arrays, snapshots, and other rich matchers. The helpers above are nicer
 specifically for `Exit`/`Option`/`Either`/instance checks.
@@ -213,8 +350,13 @@ Effect context, so `Ref.make` is the default.
 
 ## Building the test layer
 
-Helper in `orchestrator.test.ts` — reuse it across permission-resolution
-sub-tests so each `it.effect` only varies the inputs it cares about:
+Most tests should reach for `makeTestRig` (above) — it builds the full layer
+_and_ returns the capture refs so the test body doesn't have to allocate
+them. The lower-level `makeTestLayer` is still available in `testing/factories.ts`
+for tests that want to compose layers manually.
+
+Below is the original pattern from `orchestrator.test.ts` — useful when the
+permission-resolution sub-tests need to vary the layer inputs per case:
 
 ```ts
 const buildLayer = (

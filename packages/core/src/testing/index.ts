@@ -19,7 +19,15 @@ export {
 	resetSpans,
 } from './OtelTest.ts';
 export {
+	cycledHarness,
+	echoHarness,
+	flakeyHarness,
+	type FlakeyHarnessOptions,
+	routedHarness,
 	type ScriptedHarnessOptions,
+	type ScriptedResponder,
 	type ScriptedResponse,
+	type ScriptedWrite,
 	scriptedHarness,
+	silentHarness,
 } from './scriptedHarness.ts';
