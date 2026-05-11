@@ -1,38 +1,25 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { harnessOtelEnv } from './harnessOtelEnv.ts';
 import { makeHarnessOtelEnvArgs, makeRunId, makeStepId } from './testing/index.ts';
 
 const baseArgs = makeHarnessOtelEnvArgs();
+const ENDPOINT = 'http://localhost:4317';
 
 describe('harnessOtelEnv', () => {
-	const originalEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-	const originalDisabled = process.env.OTEL_SDK_DISABLED;
-	const originalAttrs = process.env.OTEL_RESOURCE_ATTRIBUTES;
-
-	beforeEach(() => {
-		delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-		delete process.env.OTEL_SDK_DISABLED;
-		delete process.env.OTEL_RESOURCE_ATTRIBUTES;
-	});
-
-	afterEach(() => {
-		if (originalEndpoint !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = originalEndpoint;
-		if (originalDisabled !== undefined) process.env.OTEL_SDK_DISABLED = originalDisabled;
-		if (originalAttrs !== undefined) process.env.OTEL_RESOURCE_ATTRIBUTES = originalAttrs;
-	});
-
 	it('returns {} when OTEL_SDK_DISABLED=true', () => {
-		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4317';
-		process.env.OTEL_SDK_DISABLED = 'true';
-		expect(harnessOtelEnv(baseArgs)).toEqual({});
+		expect(
+			harnessOtelEnv({
+				...baseArgs,
+				env: { OTEL_EXPORTER_OTLP_ENDPOINT: ENDPOINT, OTEL_SDK_DISABLED: 'true' },
+			}),
+		).toEqual({});
 	});
 
 	it('returns {} when OTLP endpoint is unset', () => {
-		expect(harnessOtelEnv(baseArgs)).toEqual({});
+		expect(harnessOtelEnv({ ...baseArgs, env: {} })).toEqual({});
 	});
 
 	it('produces W3C TRACEPARENT and resource attributes when configured', () => {
-		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4317';
 		const env = harnessOtelEnv({
 			...baseArgs,
 			runId: makeRunId('run-1'),
@@ -41,8 +28,9 @@ describe('harnessOtelEnv', () => {
 			traceId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 			spanId: 'bbbbbbbbbbbbbbbb',
 			sampled: true,
+			env: { OTEL_EXPORTER_OTLP_ENDPOINT: ENDPOINT },
 		});
-		expect(env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://localhost:4317');
+		expect(env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(ENDPOINT);
 		expect(env.OTEL_SERVICE_NAME).toBe('claude-code');
 		expect(env.TRACEPARENT).toBe('00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01');
 		expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe(
@@ -51,23 +39,33 @@ describe('harnessOtelEnv', () => {
 	});
 
 	it('flips traceparent flags to 00 for unsampled spans', () => {
-		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4317';
-		const env = harnessOtelEnv({ ...baseArgs, sampled: false });
+		const env = harnessOtelEnv({
+			...baseArgs,
+			sampled: false,
+			env: { OTEL_EXPORTER_OTLP_ENDPOINT: ENDPOINT },
+		});
 		expect(env.TRACEPARENT?.endsWith('-00')).toBe(true);
 	});
 
 	it('appends to existing OTEL_RESOURCE_ATTRIBUTES', () => {
-		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4317';
-		process.env.OTEL_RESOURCE_ATTRIBUTES = 'deployment.environment=dev';
-		const env = harnessOtelEnv(baseArgs);
+		const env = harnessOtelEnv({
+			...baseArgs,
+			env: {
+				OTEL_EXPORTER_OTLP_ENDPOINT: ENDPOINT,
+				OTEL_RESOURCE_ATTRIBUTES: 'deployment.environment=dev',
+			},
+		});
 		expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe(
 			'deployment.environment=dev,factory.run.id=r,factory.step=s,factory.iter=1',
 		);
 	});
 
 	it('merges harness-specific extra env (e.g. CLAUDE_CODE_ENABLE_TELEMETRY)', () => {
-		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4317';
-		const env = harnessOtelEnv({ ...baseArgs, extraEnv: { CLAUDE_CODE_ENABLE_TELEMETRY: '1' } });
+		const env = harnessOtelEnv({
+			...baseArgs,
+			extraEnv: { CLAUDE_CODE_ENABLE_TELEMETRY: '1' },
+			env: { OTEL_EXPORTER_OTLP_ENDPOINT: ENDPOINT },
+		});
 		expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBe('1');
 	});
 });
