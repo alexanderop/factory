@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
-import { Effect, Stream } from 'effect';
+import { type Duration, Effect, Stream } from 'effect';
 import type { HarnessCapabilities } from '../capabilities.ts';
 import { HarnessExecError } from '../errors.ts';
 import { HarnessName } from '../ids.ts';
@@ -20,7 +20,8 @@ export interface ScriptedResponse {
 	/**
 	 * When provided, the harness emits these events in order (followed by an
 	 * implicit `exit`). Used for testing tool-call telemetry without parsing
-	 * stream-json.
+	 * stream-json. Craft a custom sequence ending with a non-zero `exit` event
+	 * to simulate mid-stream crashes.
 	 */
 	readonly events?: ReadonlyArray<HarnessEvent>;
 	/**
@@ -29,14 +30,37 @@ export interface ScriptedResponse {
 	 * plan step writing `plan.md`, a review role writing `findings.json`).
 	 */
 	readonly writes?: ReadonlyArray<ScriptedWrite>;
+	/**
+	 * Sleep before this response is materialised. Useful for testing
+	 * interruption, cancellation, and ordering against concurrent fan-out.
+	 */
+	readonly delay?: Duration.DurationInput;
 }
 
 export interface ScriptedHarnessOptions {
 	readonly supports?: ReadonlyArray<PermissionMode>;
 	readonly capabilities?: HarnessCapabilities;
 	readonly defaultPermissions?: PermissionMode;
+	/**
+	 * Sync callback fired on every `exec`/`stream` invocation. Use for plain
+	 * array pushes / counter increments. The return value is ignored.
+	 */
 	readonly onCall?: (opts: ExecOpts) => void;
+	/**
+	 * Effect callback fired on every `exec`/`stream` invocation. Preferred
+	 * over `onCall` when capturing into Effect-managed state (e.g. `Ref.update`).
+	 * Both callbacks fire if both are provided.
+	 */
+	readonly onCallEffect?: (opts: ExecOpts) => Effect.Effect<void>;
+	/**
+	 * What to do when an array of `responses` runs out:
+	 *  - `'cycle'` (default): wrap around to the start.
+	 *  - `'error'`: throw — surfaces "orchestrator made more calls than scripted".
+	 */
+	readonly exhaust?: 'cycle' | 'error';
 }
+
+export type ScriptedResponder = (opts: ExecOpts) => ScriptedResponse;
 
 const ALL_MODES: ReadonlyArray<PermissionMode> = ['skip', 'accept-edits', 'read-only', 'prompt'];
 
@@ -48,7 +72,18 @@ const defaultCapabilities = (permissions: ReadonlyArray<PermissionMode>): Harnes
 	factory: { permissions, toolEvents: false },
 });
 
-export type ScriptedResponder = (opts: ExecOpts) => ScriptedResponse;
+const buildEvents = (r: ScriptedResponse): ReadonlyArray<HarnessEvent> => {
+	if (r.events) return [...r.events, { type: 'exit', code: r.exitCode ?? 0 }];
+	const events: HarnessEvent[] = [];
+	if (r.stdout) {
+		for (const line of r.stdout.split('\n')) if (line) events.push({ type: 'stdout', line });
+	}
+	if (r.stderr) {
+		for (const line of r.stderr.split('\n')) if (line) events.push({ type: 'stderr', line });
+	}
+	events.push({ type: 'exit', code: r.exitCode ?? 0 });
+	return events;
+};
 
 /**
  * Test double for `Harness`. Either:
@@ -56,6 +91,10 @@ export type ScriptedResponder = (opts: ExecOpts) => ScriptedResponse;
  *  - Or routes each call through a `responder` function that picks a response
  *    based on `ExecOpts` — use this when tests fan out concurrently and the
  *    call order is non-deterministic.
+ *
+ * Prefer the intent-named factories below (`cycledHarness`, `routedHarness`,
+ * `echoHarness`, `silentHarness`, `flakeyHarness`) so test reads document
+ * intent rather than mock shape. This factory remains the underlying builder.
  */
 export const scriptedHarness = <Name extends string>(
 	name: Name,
@@ -63,9 +102,16 @@ export const scriptedHarness = <Name extends string>(
 	options: ScriptedHarnessOptions = {},
 ): Harness<Name> => {
 	let cursor = 0;
+	const exhaust = options.exhaust ?? 'cycle';
 	const next = (opts: ExecOpts): ScriptedResponse => {
 		if (typeof responses === 'function') return responses(opts);
-		const r = responses[cursor % Math.max(responses.length, 1)] ?? {};
+		if (responses.length === 0) return {};
+		if (cursor >= responses.length && exhaust === 'error') {
+			throw new Error(
+				`scripted harness '${name}' exhausted after ${responses.length} call(s); pass exhaust: 'cycle' to repeat`,
+			);
+		}
+		const r = responses[cursor % responses.length] ?? {};
 		cursor++;
 		return r;
 	};
@@ -89,14 +135,20 @@ export const scriptedHarness = <Name extends string>(
 			),
 		);
 
+	const runOnCall = (opts: ExecOpts): Effect.Effect<void> => {
+		if (options.onCall) options.onCall(opts);
+		return options.onCallEffect ? options.onCallEffect(opts) : Effect.void;
+	};
+
 	return {
 		name,
 		capabilities,
 		defaultPermissions: options.defaultPermissions,
 		exec: (opts: ExecOpts) =>
 			Effect.gen(function* () {
-				options.onCall?.(opts);
+				yield* runOnCall(opts);
 				const r = next(opts);
+				if (r.delay !== undefined) yield* Effect.sleep(r.delay);
 				if (r.writes && r.writes.length > 0) yield* materialiseWrites(r.writes, opts);
 				const result: ExecResult = {
 					exitCode: r.exitCode ?? 0,
@@ -115,31 +167,109 @@ export const scriptedHarness = <Name extends string>(
 				}
 				return result;
 			}),
-		stream: (opts: ExecOpts) => {
-			options.onCall?.(opts);
-			const r = next(opts);
-			const events: HarnessEvent[] = [];
-			if (r.events) {
-				events.push(...r.events);
-			} else {
-				if (r.stdout) {
-					for (const line of r.stdout.split('\n')) {
-						if (line) events.push({ type: 'stdout', line });
-					}
-				}
-				if (r.stderr) {
-					for (const line of r.stderr.split('\n')) {
-						if (line) events.push({ type: 'stderr', line });
-					}
-				}
-			}
-			events.push({ type: 'exit', code: r.exitCode ?? 0 });
-			const eventStream = Stream.fromIterable(events);
-			return r.writes && r.writes.length > 0
-				? Stream.fromEffect(materialiseWrites(r.writes, opts)).pipe(
-						Stream.flatMap(() => eventStream),
-					)
-				: eventStream;
-		},
+		stream: (opts: ExecOpts) =>
+			Stream.unwrap(
+				Effect.gen(function* () {
+					yield* runOnCall(opts);
+					const r = next(opts);
+					if (r.delay !== undefined) yield* Effect.sleep(r.delay);
+					if (r.writes && r.writes.length > 0) yield* materialiseWrites(r.writes, opts);
+					return Stream.fromIterable(buildEvents(r));
+				}),
+			),
 	};
+};
+
+// ---------- Intent-named factories ----------
+
+/**
+ * Cycle through a fixed list of responses on each call. Use when the test
+ * exercises N sequential turns of the orchestrator and the call order is
+ * deterministic.
+ *
+ *   cycledHarness('claude-code', [{ stdout: 'plan\n' }, { stdout: 'iter-1\n' }])
+ */
+export const cycledHarness = <Name extends string>(
+	name: Name,
+	responses: ReadonlyArray<ScriptedResponse>,
+	options: ScriptedHarnessOptions = {},
+): Harness<Name> => scriptedHarness(name, responses, options);
+
+/**
+ * Route each call through a responder function. Use when the test fans out
+ * concurrently (e.g. review roles) and the call order is non-deterministic.
+ *
+ *   routedHarness('claude-code', (opts) =>
+ *     opts.env?.FACTORY_ROLE_ID === 'security' ? secResp : perfResp,
+ *   )
+ */
+export const routedHarness = <Name extends string>(
+	name: Name,
+	responder: ScriptedResponder,
+	options: ScriptedHarnessOptions = {},
+): Harness<Name> => scriptedHarness(name, responder, options);
+
+/**
+ * Echoes the inbound `ExecOpts` as JSON on stdout. Use to verify the
+ * orchestrator called the harness with the right cwd / env / permissions
+ * — assert on the captured stdout in the events stream.
+ */
+export const echoHarness = <Name extends string>(
+	name: Name,
+	options: ScriptedHarnessOptions = {},
+): Harness<Name> =>
+	scriptedHarness(
+		name,
+		(opts) => ({
+			stdout: `${JSON.stringify({
+				cwd: opts.cwd,
+				env: opts.env,
+				prompt: opts.prompt,
+				permissions: opts.permissions,
+			})}\n`,
+		}),
+		options,
+	);
+
+/**
+ * Always returns an empty success. Use to verify the orchestrator reached
+ * a step at all (without caring what the step "produced") — useful for
+ * pipeline-shape and routing tests.
+ */
+export const silentHarness = <Name extends string>(
+	name: Name,
+	options: ScriptedHarnessOptions = {},
+): Harness<Name> => scriptedHarness(name, [], options);
+
+export interface FlakeyHarnessOptions extends ScriptedHarnessOptions {
+	/** Number of successful calls before flipping to failure. `0` = fail on the first call. */
+	readonly failAfter: number;
+	/** Override the success response. Default: `{ stdout: 'ok\n' }`. */
+	readonly successResponse?: ScriptedResponse;
+	/** Override the failure response. Default: `{ exitCode: 1, stderr: 'flakey harness failure\n' }`. */
+	readonly failureResponse?: ScriptedResponse;
+}
+
+/**
+ * Succeeds N times then fails on every subsequent call. Use to exercise
+ * resume / retry behaviour without hand-rolling a stateful responder.
+ *
+ *   flakeyHarness('claude-code', { failAfter: 2 })
+ */
+export const flakeyHarness = <Name extends string>(
+	name: Name,
+	options: FlakeyHarnessOptions,
+): Harness<Name> => {
+	let count = 0;
+	const success = options.successResponse ?? { stdout: 'ok\n' };
+	const failure = options.failureResponse ?? { exitCode: 1, stderr: 'flakey harness failure\n' };
+	return scriptedHarness(
+		name,
+		() => {
+			const isFail = count >= options.failAfter;
+			count++;
+			return isFail ? failure : success;
+		},
+		options,
+	);
 };
