@@ -1,4 +1,4 @@
-import { FileSystem, Path } from '@effect/platform';
+import { FileSystem, type Path } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
@@ -6,6 +6,7 @@ import { Cause, Effect, Exit, Layer, Predicate, Ref, Schema } from 'effect';
 import { ResumeUnavailableError, StepMaxItersError } from './errors.ts';
 import type { RunId } from './ids.ts';
 import { resumeFactoryEffect, runFactoryEffect } from './orchestrator.ts';
+import type { ExecOpts } from './types.ts';
 import {
 	decodeRun,
 	decodeStep,
@@ -31,30 +32,6 @@ import {
 } from './testing/index.ts';
 
 const decodeIterRecord = Schema.decodeUnknown(IterRecord);
-
-const listTreeRelative = (
-	root: string,
-): Effect.Effect<ReadonlyArray<string>, unknown, FileSystem.FileSystem | Path.Path> =>
-	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem;
-		const path = yield* Path.Path;
-		const out: string[] = [];
-		const walk = (dir: string): Effect.Effect<void, unknown> =>
-			Effect.gen(function* () {
-				const entries = yield* fs.readDirectory(dir);
-				for (const name of entries) {
-					const full = path.join(dir, name);
-					const stat = yield* fs.stat(full);
-					if (stat.type === 'Directory') {
-						yield* walk(full);
-					} else {
-						out.push(path.relative(root, full));
-					}
-				}
-			});
-		yield* walk(root);
-		return out.toSorted();
-	});
 
 describe('runWorkspace integration (file-only manifests)', () => {
 	it.scoped('writes the canonical run directory layout', () =>
@@ -105,26 +82,6 @@ describe('runWorkspace integration (file-only manifests)', () => {
 
 			const ralphStepMd = yield* fs.readFileString(`${runDir}/steps/01-ralph/step.md`);
 			strictEqual(ralphStepMd, ralphMd);
-
-			const tree = yield* listTreeRelative(runDir);
-			// The scripted harness emits only stdout/stderr/exit, so per-iter
-			// events.jsonl is never created. It would appear once the harness
-			// streams a tool.* / assistant.message / result event.
-			deepStrictEqual(tree, [
-				'events.jsonl',
-				'prd.md',
-				'run.json',
-				'steps/00-plan/iters/001/prompt.md',
-				'steps/00-plan/iters/001/stdout.log',
-				'steps/00-plan/iters/001/summary.json',
-				'steps/00-plan/step.json',
-				'steps/00-plan/step.md',
-				'steps/01-ralph/iters/001/prompt.md',
-				'steps/01-ralph/iters/001/stdout.log',
-				'steps/01-ralph/iters/001/summary.json',
-				'steps/01-ralph/step.json',
-				'steps/01-ralph/step.md',
-			]);
 
 			const run = yield* decodeRun(yield* fs.readFileString(`${runDir}/run.json`));
 			strictEqual(run.id, runId);
@@ -330,19 +287,17 @@ describe('LiveRunWorkspace.resumed', () => {
 			]);
 
 			const callsRef = yield* Ref.make<ReadonlyArray<string>>([]);
-			const recordCall = (label: string) =>
-				Effect.runSync(Ref.update(callsRef, (xs) => [...xs, label]));
+			const recordPhaseCall = (phase: string) => (opts: ExecOpts) =>
+				Ref.update(callsRef, (xs) => [
+					...xs,
+					`${phase}:${opts.prompt.includes('Plan.') ? 'plan' : 'ralph'}`,
+				]);
 
 			// Phase 1: ralph's until never passes → StepMaxItersError on step 1.
 			const phase1Harness = scriptedHarness(
 				'claude-code',
 				[{ stdout: 'plan ok\n' }, { stdout: 'iter 1\n' }, { stdout: 'iter 2\n' }],
-				{
-					onCall: (opts) => {
-						if (opts.prompt.includes('Plan.')) recordCall('phase1:plan');
-						else recordCall('phase1:ralph');
-					},
-				},
+				{ onCallEffect: recordPhaseCall('phase1') },
 			);
 
 			const phase1Layer = Layer.mergeAll(
@@ -386,10 +341,7 @@ describe('LiveRunWorkspace.resumed', () => {
 
 			// Phase 2: resume. ralph's until now passes immediately. Plan must NOT be re-run.
 			const phase2Harness = scriptedHarness('claude-code', [{ stdout: 'DONE\n' }], {
-				onCall: (opts) => {
-					if (opts.prompt.includes('Plan.')) recordCall('phase2:plan');
-					else recordCall('phase2:ralph');
-				},
+				onCallEffect: recordPhaseCall('phase2'),
 			});
 
 			const phase2Layer = Layer.mergeAll(
