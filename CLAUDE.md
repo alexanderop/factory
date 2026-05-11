@@ -57,6 +57,54 @@ If a pattern is missing for the task at hand:
 2. Propose `patterns/<topic>.md` with the _factory_ subset.
 3. Get it reviewed before implementing against it.
 
+## Testing
+
+The harness is the **only** mockable seam. Workspace, step loader, until evaluator
+all use real-ish in-memory impls. Tests assert on user-visible side effects (Exit
+shape, event types in order, call sequence, file contents) — never on display
+strings or implementation details.
+
+Full pattern in `patterns/testing-effect.md` (canonical shape, factory table,
+garbage-output guidance). Short version:
+
+- **Pick a harness factory by intent**, not the bare `scriptedHarness` god-fake:
+  - `cycledHarness(name, [r1, r2])` — N sequential calls in known order.
+  - `routedHarness(name, responder)` — concurrent fan-out (review roles).
+  - `echoHarness(name)` — verify what was _sent_ (cwd / env / permissions).
+  - `silentHarness(name)` — verify orchestrator reached this step at all.
+  - `flakeyHarness(name, { failAfter: N })` — resume / retry / partial-failure.
+  - Wrap any of the above in `capturingScripted(...)` to also capture inbound
+    `ExecOpts` for end-of-test assertion.
+- **Build the rig in one line:** `const { layer, events } = makeTestRig({ harnesses: [h] })`.
+  Don't allocate `displayRef` / `eventsRef` by hand.
+- **Narrow failures:** `assertExitFailedWith(exit, ErrorClass)` — collapses the
+  `Exit.isFailure` + `Cause.failureOption` + `_tag` + `assertInstanceOf` dance.
+- **Review role findings:** `reviewRoleFindings({ roleId, findings })` —
+  encapsulates the `steps/<ord>-<stepId>/roles/<id>/findings.json` convention.
+  Don't hard-code that path in tests.
+- **Per-response options on every `ScriptedResponse`:** `delay` (interruption
+  tests), `events` (custom event sequence ending with non-zero exit to simulate
+  mid-stream crash), `writes` (materialise files), `exhaust: 'error'` (catch
+  over-iteration silently).
+- **Garbage-output coverage** lives in `packages/core/src/orchestrator-malformed.test.ts`
+  — deliberately feeds malformed JSON / mid-stream crashes / partial writes.
+  This is uniquely the scripted layer's job; real-harness e2e can't reproduce
+  these reliably.
+
+Three test tiers (vitest projects):
+
+| Tier        | Pattern               | Speed   | What lives here                               |
+| ----------- | --------------------- | ------- | --------------------------------------------- |
+| unit        | `**/*.unit.test.ts`   | <1s     | pure-data, plain `vitest`, no Effect body     |
+| integration | `**/*.test.ts` (rest) | <30s    | scripted harness + in-memory workspace — 99%  |
+| e2e         | `tests/e2e/**`        | minutes | real harness on a fixture repo, API-key-gated |
+
+Run with `pnpm test:unit` / `pnpm test:integration` / `pnpm test:e2e`. Plain
+`pnpm test` runs all three.
+
+The gold-standard test is `runWorkspace.test.ts:319-419` (e2e crash-and-resume
+with a real workspace + scripted harness). When in doubt, mirror its shape.
+
 ## Workflow
 
 1. **Fresh agent context per task.** Avoid long sessions that accrete failed
