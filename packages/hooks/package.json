@@ -1,23 +1,30 @@
 {
-	"name": "@factory/harness-codex",
+	"name": "@factory/hooks",
 	"version": "0.0.0",
 	"private": true,
+	"bin": {
+		"factory-hook": "./src/runtime/bin.ts"
+	},
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.json",
-		"typecheck": "tsc -p tsconfig.json --noEmit"
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@effect/platform": "^0.96.1",
 		"@effect/platform-node": "^0.106.0",
 		"@factory/core": "workspace:*",
-		"@factory/hooks": "workspace:*",
 		"effect": "^3.21.2"
 	},
 	"devDependencies": {
+		"@factory/harness-claude-code": "workspace:*",
+		"@factory/harness-codex": "workspace:*",
+		"@factory/harness-copilot": "workspace:*",
+		"@types/node": "^22.10.10",
 		"typescript": "^5.9.2"
 	}
 }
