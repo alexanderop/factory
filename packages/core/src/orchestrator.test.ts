@@ -1,19 +1,20 @@
 import { describe, it } from '@effect/vitest';
-import { assertInstanceOf, assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Ref } from 'effect';
+import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
+import { Effect } from 'effect';
 import { CapabilityMismatchError } from './capabilities.ts';
 import { StepMaxItersError, UnsupportedPermissionError } from './errors.ts';
 import { runFactoryEffect } from './orchestrator.ts';
 import {
-	type DisplayEntry,
+	assertExitFailedWith,
+	capturingScripted,
+	cycledHarness,
 	makeFullCapabilities,
 	makeHarnessCapabilities,
-	makeTestLayer,
-	scriptedHarness,
+	makeTestRig,
 } from './testing/index.ts';
-import type { ExecOpts, FactoryEvent, PermissionMode } from './types.ts';
+import type { FactoryEvent, PermissionMode } from './types.ts';
 
-const fakeHarness = scriptedHarness('claude-code', [
+const fakeHarness = cycledHarness('claude-code', [
 	{ stdout: 'iter-1-output\n' },
 	{ stdout: 'iter-2-output\n' },
 	{ stdout: 'iter-3-output\n' },
@@ -23,18 +24,19 @@ const fakeHarness = scriptedHarness('claude-code', [
 describe('runFactoryEffect', () => {
 	it.effect('runs every step once when no until is set, emitting lifecycle events in order', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
 			const steps: ReadonlyArray<readonly [string, string]> = [
 				['./steps/plan.md', '---\nname: plan\n---\nWrite a plan.'],
 				['./steps/ralph.md', '---\nname: ralph\n---\nIterate.'],
 			];
 
-			const layer = makeTestLayer({ displayRef, eventsRef, stepFiles: steps, verdicts: [true] });
+			const { layer, events } = makeTestRig({
+				harnesses: [fakeHarness],
+				stepFiles: steps,
+				verdicts: [true],
+			});
 
 			yield* runFactoryEffect(
-				{ name: 'sdd', harness: 'claude-code', harnesses: [fakeHarness] },
+				{ name: 'sdd', harness: 'claude-code' },
 				[
 					{ kind: 'step', id: 'plan', source: './steps/plan.md', options: {} },
 					{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} },
@@ -42,14 +44,14 @@ describe('runFactoryEffect', () => {
 				{ prd: 'inline PRD text', cwd: process.cwd() },
 			).pipe(Effect.provide(layer));
 
-			const events = yield* Ref.get(eventsRef);
-			const types = events.map((e) => e.type);
+			const captured = yield* events;
+			const types = captured.map((e) => e.type);
 
 			strictEqual(types[0], 'run.start');
 			assertTrue(types.includes('step.start'));
 			assertTrue(types.includes('run.end'));
 
-			const stepEnds = events.filter(
+			const stepEnds = captured.filter(
 				(e): e is Extract<FactoryEvent, { type: 'step.end' }> => e.type === 'step.end',
 			);
 			strictEqual(stepEnds.length, 2);
@@ -63,9 +65,6 @@ describe('runFactoryEffect', () => {
 
 	it.effect('iterates the ralph loop until the until-predicate succeeds', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
 			const steps: ReadonlyArray<readonly [string, string]> = [
 				[
 					'./steps/ralph.md',
@@ -79,9 +78,7 @@ Iterate until done.`,
 			];
 
 			// false, false, true → success on iter 3
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
+			const { layer, events } = makeTestRig({
 				stepFiles: steps,
 				verdicts: [false, false, true],
 			});
@@ -92,8 +89,8 @@ Iterate until done.`,
 				{ prd: 'inline PRD text', cwd: process.cwd() },
 			).pipe(Effect.provide(layer));
 
-			const events = yield* Ref.get(eventsRef);
-			const iters = events.filter(
+			const captured = yield* events;
+			const iters = captured.filter(
 				(e): e is Extract<FactoryEvent, { type: 'step.iter' }> => e.type === 'step.iter',
 			);
 			deepStrictEqual(
@@ -101,7 +98,7 @@ Iterate until done.`,
 				[1, 2, 3],
 			);
 
-			const ends = events.filter(
+			const ends = captured.filter(
 				(e): e is Extract<FactoryEvent, { type: 'step.end' }> => e.type === 'step.end',
 			);
 			strictEqual(ends.length, 1);
@@ -117,23 +114,18 @@ Iterate until done.`,
 		readonly harnessDefault?: PermissionMode;
 	}) =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const calls: ExecOpts[] = [];
-			const recordingHarness = scriptedHarness('claude-code', [{ stdout: 'iter-1\n' }], {
-				defaultPermissions: args.harnessDefault,
-				onCall: (opts) => calls.push(opts),
-			});
+			const { harness: recordingHarness, calls } = capturingScripted(
+				'claude-code',
+				[{ stdout: 'iter-1\n' }],
+				{ defaultPermissions: args.harnessDefault },
+			);
 
 			const stepBody =
 				args.frontmatterPermissions === undefined
 					? `---\nname: only\n---\nDo it.`
 					: `---\nname: only\npermissions: ${args.frontmatterPermissions}\n---\nDo it.`;
 
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
+			const { layer } = makeTestRig({
 				harnesses: [recordingHarness],
 				stepFiles: new Map([['./steps/only.md', stepBody]]),
 				verdicts: [true],
@@ -161,7 +153,8 @@ Iterate until done.`,
 				},
 			).pipe(Effect.provide(layer));
 
-			return calls[0]?.permissions;
+			const captured = yield* calls;
+			return captured[0]?.permissions;
 		});
 
 	describe('permission resolution', () => {
@@ -226,17 +219,12 @@ Iterate until done.`,
 			'fails with UnsupportedPermissionError when resolved mode is not in harness.supports',
 			() =>
 				Effect.gen(function* () {
-					const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-					const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-					const narrowHarness = scriptedHarness('claude-code', [{ stdout: 'unused\n' }], {
+					const narrowHarness = cycledHarness('claude-code', [{ stdout: 'unused\n' }], {
 						supports: ['skip', 'read-only'] as const,
 						defaultPermissions: 'skip',
 					});
 
-					const layer = makeTestLayer({
-						displayRef,
-						eventsRef,
+					const { layer } = makeTestRig({
 						harnesses: [narrowHarness],
 						stepFiles: new Map([['./steps/only.md', `---\nname: only\n---\nDo it.`]]),
 					});
@@ -253,10 +241,7 @@ Iterate until done.`,
 						).pipe(Effect.provide(layer)),
 					);
 
-					assertTrue(Exit.isFailure(exit));
-					const failure = Cause.failureOption(exit.cause);
-					assertTrue(failure._tag === 'Some');
-					assertInstanceOf(failure.value, UnsupportedPermissionError);
+					assertExitFailedWith(exit, UnsupportedPermissionError);
 				}),
 		);
 	});
@@ -266,18 +251,13 @@ Iterate until done.`,
 			'fails with CapabilityMismatchError before spawning when a step requires a capability the harness lacks',
 			() =>
 				Effect.gen(function* () {
-					const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-					const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
+					const { harness: limitedHarness, calls } = capturingScripted(
+						'claude-code',
+						[{ stdout: 'never\n' }],
+						{ capabilities: makeHarnessCapabilities() },
+					);
 
-					const calls: ExecOpts[] = [];
-					const limitedHarness = scriptedHarness('claude-code', [{ stdout: 'never\n' }], {
-						capabilities: makeHarnessCapabilities(),
-						onCall: (opts) => calls.push(opts),
-					});
-
-					const layer = makeTestLayer({
-						displayRef,
-						eventsRef,
+					const { layer } = makeTestRig({
 						harnesses: [limitedHarness],
 						stepFiles: new Map([
 							[
@@ -295,27 +275,19 @@ Iterate until done.`,
 						).pipe(Effect.provide(layer)),
 					);
 
-					assertTrue(Exit.isFailure(exit));
-					const failure = Cause.failureOption(exit.cause);
-					assertTrue(failure._tag === 'Some');
-					assertInstanceOf(failure.value, CapabilityMismatchError);
-					deepStrictEqual(failure.value.missing, ['session.resume']);
-					deepStrictEqual(calls, []);
+					const err = assertExitFailedWith(exit, CapabilityMismatchError);
+					deepStrictEqual(err.missing, ['session.resume']);
+					deepStrictEqual(yield* calls, []);
 				}),
 		);
 
 		it.effect('passes when capabilities meet the step requirements', () =>
 			Effect.gen(function* () {
-				const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-				const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-				const harness = scriptedHarness('claude-code', [{ stdout: 'ok\n' }], {
+				const harness = cycledHarness('claude-code', [{ stdout: 'ok\n' }], {
 					capabilities: makeFullCapabilities(),
 				});
 
-				const layer = makeTestLayer({
-					displayRef,
-					eventsRef,
+				const { layer, events } = makeTestRig({
 					harnesses: [harness],
 					stepFiles: new Map([
 						[
@@ -331,8 +303,7 @@ Iterate until done.`,
 					{ prd: 'inline PRD text', cwd: process.cwd() },
 				).pipe(Effect.provide(layer));
 
-				const events = yield* Ref.get(eventsRef);
-				const ends = events.filter(
+				const ends = (yield* events).filter(
 					(e): e is Extract<FactoryEvent, { type: 'step.end' }> => e.type === 'step.end',
 				);
 				strictEqual(ends.length, 1);
@@ -343,9 +314,6 @@ Iterate until done.`,
 
 	it.effect('fails with StepMaxItersError when until never holds', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
 			const steps: ReadonlyArray<readonly [string, string]> = [
 				[
 					'./steps/ralph.md',
@@ -358,9 +326,7 @@ Iterate.`,
 				],
 			];
 
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
+			const { layer, events } = makeTestRig({
 				stepFiles: steps,
 				verdicts: [false, false],
 			});
@@ -373,13 +339,9 @@ Iterate.`,
 				).pipe(Effect.provide(layer)),
 			);
 
-			assertTrue(Exit.isFailure(exit));
-			const failure = Cause.failureOption(exit.cause);
-			assertTrue(failure._tag === 'Some');
-			assertInstanceOf(failure.value, StepMaxItersError);
+			assertExitFailedWith(exit, StepMaxItersError);
 
-			const events = yield* Ref.get(eventsRef);
-			const errorEvent = events.find((e) => e.type === 'error');
+			const errorEvent = (yield* events).find((e) => e.type === 'error');
 			assertTrue(errorEvent !== undefined);
 		}),
 	);
