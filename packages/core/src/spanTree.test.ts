@@ -1,16 +1,9 @@
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Effect, Ref } from 'effect';
+import { Effect } from 'effect';
 import { runFactoryEffect } from './orchestrator.ts';
-import {
-	type DisplayEntry,
-	getFinishedSpans,
-	makeTestLayer,
-	OtelTestLayer,
-	scriptedHarness,
-} from './testing/index.ts';
-import type { FactoryEvent } from './types.ts';
+import { cycledHarness, getFinishedSpans, makeTestRig, OtelTestLayer } from './testing/index.ts';
 
 const childrenOf = (
 	spans: ReadonlyArray<ReadableSpan>,
@@ -23,14 +16,9 @@ const childrenOf = (
 describe('span tree', () => {
 	it.effect('factory.run has factory.step <id> children, each with load + run', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
+			const { layer } = makeTestRig({
 				harnesses: [
-					scriptedHarness('claude-code', [
+					cycledHarness('claude-code', [
 						{ stdout: 'plan-out\n' },
 						{ stdout: 'branch-out\n' },
 						{ stdout: 'ralph-out\n' },
@@ -85,14 +73,9 @@ describe('span tree', () => {
 
 	it.effect('iter span names embed step id and iter index for a 3-iter ralph step', () =>
 		Effect.gen(function* () {
-			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const layer = makeTestLayer({
-				displayRef,
-				eventsRef,
+			const { layer } = makeTestRig({
 				harnesses: [
-					scriptedHarness('claude-code', [
+					cycledHarness('claude-code', [
 						{ stdout: 'iter-1\n' },
 						{ stdout: 'iter-2\n' },
 						{ stdout: 'iter-3\n' },
