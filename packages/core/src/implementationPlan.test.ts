@@ -7,6 +7,7 @@ import { Effect, Layer, Ref } from 'effect';
 import { runFactoryEffect } from './orchestrator.ts';
 import { LiveRunWorkspace } from './services/RunWorkspace.ts';
 import {
+	cycledHarness,
 	type DisplayEntry,
 	harnessRegistryLayer,
 	InMemoryStepLoader,
@@ -68,7 +69,7 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 
 			const runId = makeRunId('plan-flow-run');
 			let callIndex = 0;
-			const harness = scriptedHarness(
+			const harness = cycledHarness(
 				'claude-code',
 				[{ stdout: 'wrote plan' }, { stdout: 'shipped slice-1' }],
 				{

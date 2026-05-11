@@ -1,8 +1,8 @@
 import { FileSystem } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
-import { assertInstanceOf, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit } from 'effect';
+import { deepStrictEqual, strictEqual } from '@effect/vitest/utils';
+import { Effect, Exit } from 'effect';
 import { ResumeMismatchError, RunRecordingError } from './errors.ts';
 import {
 	atomicWriteString,
@@ -15,6 +15,7 @@ import {
 	writeStep,
 } from './services/runManifest.ts';
 import {
+	assertExitFailedWith,
 	makeIterRecord,
 	makeRunId,
 	makeRunRecord,
@@ -47,8 +48,7 @@ describe('runManifest codec', () => {
 	it.effect('decodeRun maps malformed JSON to RunRecordingError', () =>
 		Effect.gen(function* () {
 			const exit = yield* Effect.exit(decodeRun('{not json'));
-			const failure = Cause.failureOption(Exit.isFailure(exit) ? exit.cause : Cause.empty);
-			assertInstanceOf(failure._tag === 'Some' ? failure.value : null, RunRecordingError);
+			assertExitFailedWith(exit, RunRecordingError);
 		}),
 	);
 });
@@ -153,8 +153,7 @@ describe('planResume', () => {
 			const recorded = [stepRecord(0, 'plan', 'ok'), stepRecord(1, 'ralph', 'failed')];
 			const drifted = [pipelineRef(0, 'plan'), pipelineRef(1, 'simplify')];
 			const exit = yield* Effect.exit(planResume(recorded, drifted));
-			const failure = Cause.failureOption(Exit.isFailure(exit) ? exit.cause : Cause.empty);
-			assertInstanceOf(failure._tag === 'Some' ? failure.value : null, ResumeMismatchError);
+			assertExitFailedWith(exit, ResumeMismatchError);
 		}),
 	);
 });
