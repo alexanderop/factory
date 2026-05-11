@@ -2,11 +2,17 @@ import { FileSystem } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertInclude, assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Effect, Exit, Ref } from 'effect';
+import { Effect, Exit } from 'effect';
 import { runFactoryEffect } from './orchestrator.ts';
 import { decodeFindings } from './review/finding.ts';
 import { decodeStep } from './services/runManifest.ts';
-import { makeRunId, makeTestLayer, scriptedHarness } from './testing/index.ts';
+import {
+	cycledHarness,
+	makeRunId,
+	makeTestRig,
+	reviewRoleFindings,
+	routedHarness,
+} from './testing/index.ts';
 import type { ExecOpts, FactoryEvent, PipelineEntry } from './types.ts';
 
 describe('runFactoryEffect — review step', () => {
@@ -15,31 +21,15 @@ describe('runFactoryEffect — review step', () => {
 			const fs = yield* FileSystem.FileSystem;
 			const runDir = yield* fs.makeTempDirectoryScoped({ prefix: 'review-test-' });
 
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const scripted = scriptedHarness('claude-code', [
-				{
+			const scripted = cycledHarness('claude-code', [
+				reviewRoleFindings({
+					roleId: 'security',
+					findings: [{ severity: 'P1', file: 'src/db.ts', line: 12, message: 'sql injection' }],
 					stdout: 'wrote findings\n',
-					writes: [
-						{
-							path: 'steps/00-review/roles/security/findings.json',
-							content: JSON.stringify({
-								findings: [
-									{
-										severity: 'P1',
-										file: 'src/db.ts',
-										line: 12,
-										message: 'sql injection',
-									},
-								],
-							}),
-						},
-					],
-				},
+				}),
 			]);
 
-			const layer = makeTestLayer({
-				eventsRef,
+			const { layer, events } = makeTestRig({
 				harnesses: [scripted],
 				stepFiles: new Map([
 					['./roles/security.md', '---\nname: security\n---\nReview for security issues.'],
@@ -72,7 +62,7 @@ describe('runFactoryEffect — review step', () => {
 			strictEqual(decoded.findings[0]?.severity, 'P1');
 			strictEqual(decoded.findings[0]?.file, 'src/db.ts');
 
-			const ends = (yield* Ref.get(eventsRef)).filter(
+			const ends = (yield* events).filter(
 				(e): e is Extract<FactoryEvent, { type: 'step.end' }> => e.type === 'step.end',
 			);
 			strictEqual(ends.length, 1);
@@ -85,60 +75,29 @@ describe('runFactoryEffect — review step', () => {
 			const fs = yield* FileSystem.FileSystem;
 			const runDir = yield* fs.makeTempDirectoryScoped({ prefix: 'review-test-' });
 
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
 			const calls: ExecOpts[] = [];
-			const scripted = scriptedHarness(
+			const scripted = routedHarness(
 				'claude-code',
 				(opts) => {
 					const roleId = opts.env?.FACTORY_ROLE_ID;
 					if (roleId === 'security') {
-						return {
-							stdout: 'security done\n',
-							writes: [
-								{
-									path: 'steps/00-review/roles/security/findings.json',
-									content: JSON.stringify({
-										findings: [
-											{
-												severity: 'P1',
-												file: 'src/auth.ts',
-												line: 7,
-												message: 'missing auth',
-											},
-										],
-									}),
-								},
-							],
-						};
+						return reviewRoleFindings({
+							roleId: 'security',
+							findings: [{ severity: 'P1', file: 'src/auth.ts', line: 7, message: 'missing auth' }],
+						});
 					}
 					if (roleId === 'perf') {
-						return {
-							stdout: 'perf done\n',
-							writes: [
-								{
-									path: 'steps/00-review/roles/perf/findings.json',
-									content: JSON.stringify({
-										findings: [
-											{
-												severity: 'P2',
-												file: 'src/list.ts',
-												line: 33,
-												message: 'n+1 query',
-											},
-										],
-									}),
-								},
-							],
-						};
+						return reviewRoleFindings({
+							roleId: 'perf',
+							findings: [{ severity: 'P2', file: 'src/list.ts', line: 33, message: 'n+1 query' }],
+						});
 					}
 					return {};
 				},
 				{ onCall: (opts) => calls.push(opts) },
 			);
 
-			const layer = makeTestLayer({
-				eventsRef,
+			const { layer } = makeTestRig({
 				harnesses: [scripted],
 				stepFiles: new Map([
 					['./roles/security.md', '---\nname: security\n---\nSecurity.'],
@@ -186,45 +145,32 @@ describe('runFactoryEffect — review step', () => {
 			const fs = yield* FileSystem.FileSystem;
 			const runDir = yield* fs.makeTempDirectoryScoped({ prefix: 'review-test-' });
 
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
 			const claudeRoles: string[] = [];
 			const codexRoles: string[] = [];
 
-			const claude = scriptedHarness(
+			const claude = routedHarness(
 				'claude-code',
-				(opts) => ({
-					stdout: 'claude done\n',
-					writes: [
-						{
-							path: `steps/00-review/roles/${opts.env?.FACTORY_ROLE_ID ?? 'unknown'}/findings.json`,
-							content: JSON.stringify({
-								findings: [{ severity: 'P1', file: 'src/x.ts', message: 'from claude' }],
-							}),
-						},
-					],
-				}),
+				(opts) =>
+					reviewRoleFindings({
+						roleId: opts.env?.FACTORY_ROLE_ID ?? 'unknown',
+						findings: [{ severity: 'P1', file: 'src/x.ts', message: 'from claude' }],
+						stdout: 'claude done\n',
+					}),
 				{ onCall: (o) => claudeRoles.push(o.env?.FACTORY_ROLE_ID ?? '') },
 			);
 
-			const codex = scriptedHarness(
+			const codex = routedHarness(
 				'codex',
-				(opts) => ({
-					stdout: 'codex done\n',
-					writes: [
-						{
-							path: `steps/00-review/roles/${opts.env?.FACTORY_ROLE_ID ?? 'unknown'}/findings.json`,
-							content: JSON.stringify({
-								findings: [{ severity: 'P2', file: 'src/y.ts', message: 'from codex' }],
-							}),
-						},
-					],
-				}),
+				(opts) =>
+					reviewRoleFindings({
+						roleId: opts.env?.FACTORY_ROLE_ID ?? 'unknown',
+						findings: [{ severity: 'P2', file: 'src/y.ts', message: 'from codex' }],
+						stdout: 'codex done\n',
+					}),
 				{ onCall: (o) => codexRoles.push(o.env?.FACTORY_ROLE_ID ?? '') },
 			);
 
-			const layer = makeTestLayer({
-				eventsRef,
+			const { layer } = makeTestRig({
 				harnesses: [claude, codex],
 				stepFiles: new Map([
 					['./roles/security.md', '---\nname: security\n---\nSecurity.'],
@@ -270,25 +216,16 @@ describe('runFactoryEffect — review step', () => {
 			const fs = yield* FileSystem.FileSystem;
 			const runDir = yield* fs.makeTempDirectoryScoped({ prefix: 'review-test-' });
 
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const scripted = scriptedHarness('claude-code', (opts) => {
+			const scripted = routedHarness('claude-code', (opts) => {
 				const roleId = opts.env?.FACTORY_ROLE_ID;
 				if (roleId === 'good') {
-					return {
-						stdout: 'good done\n',
-						writes: [
-							{
-								path: 'steps/00-review/roles/good/findings.json',
-								content: JSON.stringify({
-									findings: [
-										{ severity: 'P1', file: 'src/a.ts', message: 'a' },
-										{ severity: 'P3', file: 'src/b.ts', message: 'b' },
-									],
-								}),
-							},
+					return reviewRoleFindings({
+						roleId: 'good',
+						findings: [
+							{ severity: 'P1', file: 'src/a.ts', message: 'a' },
+							{ severity: 'P3', file: 'src/b.ts', message: 'b' },
 						],
-					};
+					});
 				}
 				if (roleId === 'bad') {
 					return { stdout: 'kaboom\n', exitCode: 7 };
@@ -296,8 +233,7 @@ describe('runFactoryEffect — review step', () => {
 				return {};
 			});
 
-			const layer = makeTestLayer({
-				eventsRef,
+			const { layer } = makeTestRig({
 				harnesses: [scripted],
 				stepFiles: new Map([
 					['./roles/good.md', '---\nname: good\n---\nGood.'],
@@ -356,37 +292,21 @@ describe('runFactoryEffect — review step', () => {
 			const fs = yield* FileSystem.FileSystem;
 			const runDir = yield* fs.makeTempDirectoryScoped({ prefix: 'review-test-' });
 
-			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
-
-			const scripted = scriptedHarness('claude-code', (opts) => {
+			const scripted = routedHarness('claude-code', (opts) => {
 				const roleId = opts.env?.FACTORY_ROLE_ID;
 				if (roleId === 'flaky') {
 					return { stdout: 'oops\n', exitCode: 17 };
 				}
 				if (roleId === 'quality') {
-					return {
-						stdout: 'quality done\n',
-						writes: [
-							{
-								path: 'steps/00-review/roles/quality/findings.json',
-								content: JSON.stringify({
-									findings: [
-										{
-											severity: 'P2',
-											file: 'src/x.ts',
-											message: 'magic number',
-										},
-									],
-								}),
-							},
-						],
-					};
+					return reviewRoleFindings({
+						roleId: 'quality',
+						findings: [{ severity: 'P2', file: 'src/x.ts', message: 'magic number' }],
+					});
 				}
 				return {};
 			});
 
-			const layer = makeTestLayer({
-				eventsRef,
+			const { layer } = makeTestRig({
 				harnesses: [scripted],
 				stepFiles: new Map([
 					['./roles/flaky.md', '---\nname: flaky\n---\nFlaky.'],
