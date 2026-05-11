@@ -1,16 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { harnessOtelEnv } from './harnessOtelEnv.ts';
-import { HarnessName, RunId, StepId } from './ids.ts';
+import { makeHarnessOtelEnvArgs, makeRunId, makeStepId } from './testing/index.ts';
 
-const baseArgs = {
-	harness: HarnessName.make('claude-code'),
-	runId: RunId.make('r'),
-	stepId: StepId.make('s'),
-	iter: 1,
-	traceId: '0123456789abcdef0123456789abcdef',
-	spanId: '0123456789abcdef',
-	sampled: true,
-} as const;
+const baseArgs = makeHarnessOtelEnvArgs();
 
 describe('harnessOtelEnv', () => {
 	const originalEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
@@ -43,8 +35,8 @@ describe('harnessOtelEnv', () => {
 		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4317';
 		const env = harnessOtelEnv({
 			...baseArgs,
-			runId: RunId.make('run-1'),
-			stepId: StepId.make('plan'),
+			runId: makeRunId('run-1'),
+			stepId: makeStepId('plan'),
 			iter: 3,
 			traceId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 			spanId: 'bbbbbbbbbbbbbbbb',

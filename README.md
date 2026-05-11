@@ -288,6 +288,108 @@ export default factory({
   .step('pr', step('pr'));
 ```
 
+## Review step (parallel fan-out)
+
+`.review(id, { roles })` is a step that fans out N **roles** in parallel, each
+one a separate harness invocation. Roles emit structured findings; core merges
+them into a single `findings.json` artifact the next step consumes. Different
+roles can target different harnesses — claude reviews security, codex reviews
+performance, copilot reviews style — all in one wall-clock invocation.
+
+```ts
+import { factory } from '@factory/core';
+import { claudeCode } from '@factory/harness-claude-code';
+import { codex } from '@factory/harness-codex';
+
+const role = (name: string): string => resolve(here, 'roles', `${name}.md`);
+
+export default factory({
+  name: 'effect-review',
+  harness: 'claude-code',
+  harnesses: [claudeCode, codex],
+})
+  .step('plan', step('plan'))
+  .step('branch', step('branch'))
+  .step('ralph', step('ralph'))
+  .review('review', {
+    roles: [
+      { id: 'security', source: role('security') },
+      { id: 'quality', source: role('quality') },
+      { id: 'perf', source: role('perf'), harness: 'codex' },
+    ],
+    concurrency: 3, // optional; default = roles.length
+  })
+  .step('resolve', step('resolve')) // reads $FACTORY_RUN_DIR/findings.json
+  .step('pr', step('pr'));
+```
+
+### Role shape
+
+A role is a markdown file — same shape as a step. The role's harness is
+selected (in order) by: `role.harness` → step default → factory default.
+
+```markdown
+---
+name: security
+---
+
+You are a security reviewer. The PRD above is the unit of work.
+
+Write findings to `$FACTORY_ROLE_DIR/findings.json`:
+
+{
+"findings": [
+{ "severity": "P1" | "P2" | "P3",
+"file": "<path>",
+"line": <number, optional>,
+"message": "<one line>",
+"suggestion": "<optional>" }
+]
+}
+
+End your final message with `<promise>REVIEWED</promise>`.
+```
+
+The orchestrator passes each role two extra env vars on top of the usual
+`FACTORY_RUN_DIR` / `FACTORY_RUN_ID`:
+
+- `FACTORY_ROLE_ID` — the role's id from the builder
+- `FACTORY_ROLE_DIR` — `$FACTORY_RUN_DIR/steps/<ord>-<stepId>/roles/<role-id>/`,
+  where it should write `findings.json`
+
+### Behaviour
+
+- **Parallel.** Roles run concurrently via `Effect.partition`. Wall-clock time
+  is roughly `max(role)` instead of `sum(role)`. Cap with `concurrency: N`.
+- **Failure-isolated.** A role that exits non-zero or emits invalid JSON does
+  **not** halt the review step. It becomes a synthetic `P3` finding in the
+  merged output (`message: "review role 'X' failed: …"`). Sibling roles still
+  run; the review step exits `ok`.
+- **Per-role harness.** Set `harness` per role to mix model/provider per
+  reviewer.
+- **Findings are stamped.** Roles write findings without a `role:` field; core
+  adds it on merge. Downstream `resolve` step gets `findings.json` keyed by
+  role.
+
+### Artifacts
+
+```
+.factory/runs/<runId>/
+  prd.md
+  findings.json                     ← merged output (next step reads this)
+  steps/00-review/
+    step.json                       ← includes roles: [{name, harness, status, findings, ...}]
+    step.md                         ← synthesised review manifest
+    roles/
+      security/findings.json        ← raw role output (no `role:` field)
+      quality/findings.json
+      perf/findings.json
+```
+
+`step.json.roles[]` records per-role outcome — status (`ok`/`failed`), the
+harness used, finding count, and `errorTag` on failure — so observability and
+resume planning see what each reviewer did without parsing the merged file.
+
 ## Observability
 
 OpenTelemetry is wired in from day one. Default exporter is OTLP/gRPC at `localhost:4317` — point it at any OTel backend.

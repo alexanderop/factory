@@ -4,15 +4,11 @@ import { deepStrictEqual } from '@effect/vitest/utils';
 import { Effect } from 'effect';
 import type { HarnessCapabilities } from './capabilities.ts';
 import { createSubprocessHarness } from './subprocess.ts';
+import { makeHarnessCapabilities } from './testing/index.ts';
 import type { PermissionMode } from './types.ts';
 
-const baseCaps = (permissions: ReadonlyArray<PermissionMode>): HarnessCapabilities => ({
-	loadSession: false,
-	mcp: { http: false, sse: false },
-	prompt: { image: false, audio: false, embeddedContext: false },
-	session: { list: false, resume: false, close: false },
-	factory: { permissions, toolEvents: false },
-});
+const baseCaps = (permissions: ReadonlyArray<PermissionMode>): HarnessCapabilities =>
+	makeHarnessCapabilities({ factory: { permissions, toolEvents: false } });
 
 describe('createSubprocessHarness', () => {
 	it.effect('passes the resolved permissions mode to buildArgs ctx', () =>

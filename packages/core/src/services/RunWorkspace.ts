@@ -7,6 +7,8 @@ import {
 	type IterRecord,
 	readRun,
 	readStep,
+	type RoleRecord,
+	type RoleStatus,
 	type RunRecord,
 	type StepRecord,
 	writeIter as writeIterEffect,
@@ -71,6 +73,25 @@ export interface IterEndArgs {
 	readonly filesChanged?: number;
 }
 
+export interface RoleStartArgs {
+	readonly stepOrd: number;
+	readonly roleId: string;
+	readonly harness: HarnessName;
+}
+
+export interface RolePaths {
+	readonly roleDir: string;
+	readonly findingsPath: string;
+}
+
+export interface RoleEndArgs {
+	readonly stepOrd: number;
+	readonly roleId: string;
+	readonly status: RoleStatus;
+	readonly findings: number;
+	readonly errorTag?: string;
+}
+
 export interface RunWorkspaceService {
 	readonly runId: RunId;
 	readonly runDir: string;
@@ -81,6 +102,8 @@ export interface RunWorkspaceService {
 	readonly recordStepEnd: (args: StepEndArgs) => Effect.Effect<void, RunRecordingError>;
 	readonly recordIterStart: (args: IterStartArgs) => Effect.Effect<IterPaths, RunRecordingError>;
 	readonly recordIterEnd: (args: IterEndArgs) => Effect.Effect<void, RunRecordingError>;
+	readonly recordRoleStart: (args: RoleStartArgs) => Effect.Effect<RolePaths, RunRecordingError>;
+	readonly recordRoleEnd: (args: RoleEndArgs) => Effect.Effect<void, RunRecordingError>;
 	readonly appendEvent: (event: FactoryEvent) => Effect.Effect<void, RunRecordingError>;
 	readonly appendStdout: (
 		stepOrd: number,
@@ -144,6 +167,10 @@ const makeService = ({
 	const iterPathsByKey = new Map<string, IterPaths>();
 	const runPath = path.join(runDir, 'run.json');
 	const eventsPath = path.join(runDir, 'events.jsonl');
+	// Roles fan out concurrently — serialise persistence to keep the
+	// read-modify-write of `entry.record.roles` atomic and avoid clobbering
+	// the per-step `step.json.tmp.<pid>` file from parallel fibers.
+	const roleMutex = Effect.unsafeMakeSemaphore(1);
 	let runRecord: RunRecord | undefined = hydrated?.runRecord;
 	if (hydrated) {
 		for (const entry of hydrated.stepEntries) {
@@ -349,6 +376,68 @@ const makeService = ({
 					yield* writeIter(path.join(iterPaths.iterDir, 'summary.json'), updatedIter);
 				}
 			}),
+
+		recordRoleStart: (args) =>
+			roleMutex.withPermits(1)(
+				Effect.gen(function* () {
+					const entry = yield* requireStep(
+						args.stepOrd,
+						`start role ${args.stepOrd}/${args.roleId}`,
+					);
+					const roleDir = path.join(entry.dir, 'roles', args.roleId);
+					yield* ensureDir(roleDir);
+					const findingsPath = path.join(roleDir, 'findings.json');
+					const startedAt = yield* Clock.currentTimeMillis;
+					const role: RoleRecord = {
+						name: args.roleId,
+						harness: args.harness,
+						startedAt,
+						status: 'running',
+						findings: 0,
+					};
+					const existing = entry.record.roles ?? [];
+					const roles = existing.concat(role);
+					entry.record = { ...entry.record, roles };
+					yield* persistStep(entry);
+					return { roleDir, findingsPath } satisfies RolePaths;
+				}),
+			),
+
+		recordRoleEnd: (args) =>
+			roleMutex.withPermits(1)(
+				Effect.gen(function* () {
+					const entry = yield* requireStep(args.stepOrd, `end role ${args.stepOrd}/${args.roleId}`);
+					const existing = entry.record.roles ?? [];
+					const next = existing.slice();
+					let idx = -1;
+					for (let i = 0; i < next.length; i++) {
+						if (next[i]?.name === args.roleId) {
+							idx = i;
+							break;
+						}
+					}
+					const current = idx < 0 ? undefined : next[idx];
+					if (current === undefined) {
+						return yield* Effect.fail(
+							new RunRecordingError({
+								message: `cannot end role ${args.stepOrd}/${args.roleId}: role not started`,
+							}),
+						);
+					}
+					const endedAt = yield* Clock.currentTimeMillis;
+					next[idx] = {
+						name: current.name,
+						harness: current.harness,
+						startedAt: current.startedAt,
+						endedAt,
+						status: args.status,
+						findings: args.findings,
+						...(args.errorTag === undefined ? {} : { errorTag: args.errorTag }),
+					};
+					entry.record = { ...entry.record, roles: next };
+					yield* persistStep(entry);
+				}),
+			),
 
 		appendEvent: (event) => appendLine(eventsPath, JSON.stringify(event)),
 

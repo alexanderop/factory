@@ -4,13 +4,12 @@ import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
 import { Cause, Effect, Exit, Layer, Predicate, Ref, Schema } from 'effect';
 import { ResumeUnavailableError, StepMaxItersError } from './errors.ts';
-import { HarnessName, PipelineName, RunId, StepId } from './ids.ts';
+import type { RunId } from './ids.ts';
 import { resumeFactoryEffect, runFactoryEffect } from './orchestrator.ts';
 import {
 	decodeRun,
 	decodeStep,
 	IterRecord,
-	type RunRecord,
 	type StepRecord,
 	writeRun,
 	writeStep,
@@ -20,6 +19,11 @@ import {
 	type DisplayEntry,
 	harnessRegistryLayer,
 	InMemoryStepLoader,
+	makeIterRecord,
+	makeRunId,
+	makeRunRecord,
+	makeStepId,
+	makeStepRecord,
 	noopEventEmitter,
 	scriptedHarness,
 	scriptedUntilEvaluator,
@@ -66,7 +70,7 @@ describe('runWorkspace integration (file-only manifests)', () => {
 				['./steps/ralph.md', ralphMd],
 			]);
 
-			const runId = RunId.make('integration-test-run');
+			const runId = makeRunId('integration-test-run');
 
 			const fakeHarness = scriptedHarness('claude-code', [
 				{ stdout: 'iter-1\n' },
@@ -85,8 +89,8 @@ describe('runWorkspace integration (file-only manifests)', () => {
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code', harnesses: [fakeHarness] },
 				[
-					{ id: 'plan', source: './steps/plan.md', options: {} },
-					{ id: 'ralph', source: './steps/ralph.md', options: {} },
+					{ kind: 'step', id: 'plan', source: './steps/plan.md', options: {} },
+					{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} },
 				],
 				{ prd: 'inline PRD text', cwd: tmp },
 			).pipe(Effect.provide(layer));
@@ -178,7 +182,7 @@ describe('runWorkspace integration (file-only manifests)', () => {
 				],
 			]);
 
-			const runId = RunId.make('stream-test-run');
+			const runId = makeRunId('stream-test-run');
 
 			const fiveLines = 'a\nb\nc\nd\ne\n';
 			const harness = scriptedHarness('claude-code', [
@@ -197,7 +201,7 @@ describe('runWorkspace integration (file-only manifests)', () => {
 
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
-				[{ id: 'ralph', source: './steps/ralph.md', options: {} }],
+				[{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} }],
 				{ prd: 'inline PRD', cwd: tmp },
 			).pipe(Effect.provide(layer));
 
@@ -255,15 +259,12 @@ describe('LiveRunWorkspace.resumed', () => {
 			const fs = yield* FileSystem.FileSystem;
 			yield* fs.makeDirectory(runDir, { recursive: true });
 			yield* fs.writeFileString(`${runDir}/prd.md`, 'inline PRD');
-			const runRecord: RunRecord = {
+			const runRecord = makeRunRecord({
 				id: runId,
-				pipeline: PipelineName.make('sdd'),
-				defaultHarness: HarnessName.make('claude-code'),
 				cwd: '/tmp/seeded',
 				prdSource: 'inline PRD',
-				startedAt: 1_700_000_000_000,
 				status: 'running',
-			};
+			});
 			yield* writeRun(`${runDir}/run.json`, runRecord);
 			for (const step of recordedSteps) {
 				const dir = `${runDir}/steps/${step.ord.toString().padStart(2, '0')}-${step.stepId}`;
@@ -273,31 +274,26 @@ describe('LiveRunWorkspace.resumed', () => {
 			yield* fs.writeFileString(`${runDir}/events.jsonl`, '');
 		});
 
-	const completedStep = (ord: number, stepId: string): StepRecord => ({
-		ord,
-		stepId: StepId.make(stepId),
-		source: `./steps/${stepId}.md`,
-		harness: HarnessName.make('claude-code'),
-		maxIters: 1,
-		startedAt: 1_700_000_000_100,
-		endedAt: 1_700_000_000_200,
-		status: 'ok',
-		iters: [
-			{
-				n: 1,
-				startedAt: 1_700_000_000_110,
-				endedAt: 1_700_000_000_190,
-				exitCode: 0,
-				untilPassed: true,
-			},
-		],
-	});
+	const completedStep = (ord: number, stepId: string): StepRecord =>
+		makeStepRecord({
+			ord,
+			stepId: makeStepId(stepId),
+			source: `./steps/${stepId}.md`,
+			startedAt: 1_700_000_000_100,
+			endedAt: 1_700_000_000_200,
+			iters: [
+				makeIterRecord({
+					startedAt: 1_700_000_000_110,
+					endedAt: 1_700_000_000_190,
+				}),
+			],
+		});
 
 	it.scoped('hydrates run + step records from disk', () =>
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
 			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-resume-' });
-			const runId = RunId.make('resumed-run');
+			const runId = makeRunId('resumed-run');
 			const runDir = `${tmp}/.factory/runs/${runId}`;
 			yield* seedRunDir(runDir, runId, [completedStep(0, 'plan'), completedStep(1, 'ralph')]);
 
@@ -324,7 +320,7 @@ describe('LiveRunWorkspace.resumed', () => {
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
 			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-resume-e2e-' });
-			const runId = RunId.make('e2e-run');
+			const runId = makeRunId('e2e-run');
 
 			const planMd = '---\nname: plan\nuntil: "output contains: PLAN"\nmaxIters: 1\n---\nPlan.';
 			const ralphMd = '---\nname: ralph\nuntil: "output contains: DONE"\nmaxIters: 2\n---\nIter.';
@@ -359,9 +355,9 @@ describe('LiveRunWorkspace.resumed', () => {
 			).pipe(Layer.provideMerge(NodeContext.layer));
 
 			const phase1Steps = [
-				{ id: 'plan', source: './steps/plan.md', options: {} },
-				{ id: 'ralph', source: './steps/ralph.md', options: {} },
-			];
+				{ kind: 'step', id: 'plan', source: './steps/plan.md', options: {} },
+				{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} },
+			] as const;
 
 			const phase1Exit = yield* Effect.exit(
 				runFactoryEffect(
@@ -427,7 +423,7 @@ describe('LiveRunWorkspace.resumed', () => {
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
 			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-resume-done-' });
-			const runId = RunId.make('done-run');
+			const runId = makeRunId('done-run');
 			const runDir = `${tmp}/.factory/runs/${runId}`;
 			yield* seedRunDir(runDir, runId, [completedStep(0, 'plan'), completedStep(1, 'ralph')]);
 
@@ -451,8 +447,8 @@ describe('LiveRunWorkspace.resumed', () => {
 				resumeFactoryEffect(
 					{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
 					[
-						{ id: 'plan', source: './steps/plan.md', options: {} },
-						{ id: 'ralph', source: './steps/ralph.md', options: {} },
+						{ kind: 'step', id: 'plan', source: './steps/plan.md', options: {} },
+						{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} },
 					],
 					{ runId, cwd: tmp },
 				).pipe(Effect.provide(layer)),
@@ -469,13 +465,13 @@ describe('LiveRunWorkspace.resumed', () => {
 			const tmp = yield* fs.makeTempDirectoryScoped({ prefix: 'factory-resume-symlink-' });
 			const runsDir = `${tmp}/.factory/runs`;
 
-			const otherRunId = RunId.make('other-run');
+			const otherRunId = makeRunId('other-run');
 			yield* fs.makeDirectory(`${runsDir}/${otherRunId}`, { recursive: true });
 			if (process.platform !== 'win32') {
 				yield* fs.symlink(otherRunId, `${runsDir}/latest`);
 			}
 
-			const runId = RunId.make('resumed-run');
+			const runId = makeRunId('resumed-run');
 			const runDir = `${runsDir}/${runId}`;
 			yield* seedRunDir(runDir, runId, [completedStep(0, 'plan')]);
 

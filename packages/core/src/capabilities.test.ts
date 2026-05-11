@@ -4,22 +4,10 @@ import {
 	type HarnessCapabilities,
 	type StepRequirements,
 } from './capabilities.ts';
+import { makeEmptyCapabilities, makeFullCapabilities } from './testing/index.ts';
 
-const fullCaps: HarnessCapabilities = {
-	loadSession: true,
-	mcp: { http: true, sse: true },
-	prompt: { image: true, audio: true, embeddedContext: true },
-	session: { list: true, resume: true, close: true },
-	factory: { permissions: ['skip', 'accept-edits', 'read-only', 'prompt'], toolEvents: true },
-};
-
-const emptyCaps: HarnessCapabilities = {
-	loadSession: false,
-	mcp: { http: false, sse: false },
-	prompt: { image: false, audio: false, embeddedContext: false },
-	session: { list: false, resume: false, close: false },
-	factory: { permissions: [], toolEvents: false },
-};
+const fullCaps: HarnessCapabilities = makeFullCapabilities();
+const emptyCaps: HarnessCapabilities = makeEmptyCapabilities();
 
 describe('matchRequirements', () => {
 	it('returns no missing fields when requirements are undefined', () => {

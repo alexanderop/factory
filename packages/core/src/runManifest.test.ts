@@ -4,50 +4,36 @@ import { describe, it } from '@effect/vitest';
 import { assertInstanceOf, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
 import { Cause, Effect, Exit } from 'effect';
 import { ResumeMismatchError, RunRecordingError } from './errors.ts';
-import { HarnessName, PipelineName, RunId, StepId } from './ids.ts';
 import {
 	atomicWriteString,
 	decodeRun,
 	encodeRun,
 	planResume,
 	readStep,
-	type RunRecord,
 	type StepRecord,
 	writeRun,
 	writeStep,
 } from './services/runManifest.ts';
+import {
+	makeIterRecord,
+	makeRunId,
+	makeRunRecord,
+	makeStepId,
+	makeStepRecord,
+} from './testing/index.ts';
 
-const sampleRun: RunRecord = {
-	id: RunId.make('run-codec-1'),
-	pipeline: PipelineName.make('sdd'),
-	defaultHarness: HarnessName.make('claude-code'),
-	cwd: '/tmp/cwd',
-	prdSource: 'inline',
-	startedAt: 1_700_000_000_000,
+const sampleRun = makeRunRecord({
+	id: makeRunId('run-codec-1'),
 	endedAt: 1_700_000_000_500,
-	status: 'ok',
-};
+});
 
-const sampleStep: StepRecord = {
-	ord: 0,
-	stepId: StepId.make('plan'),
-	source: './steps/plan.md',
-	harness: HarnessName.make('claude-code'),
+const sampleStep = makeStepRecord({
 	until: 'tests pass',
 	maxIters: 3,
 	startedAt: 1_700_000_000_100,
 	endedAt: 1_700_000_000_400,
-	status: 'ok',
-	iters: [
-		{
-			n: 1,
-			startedAt: 1_700_000_000_150,
-			endedAt: 1_700_000_000_200,
-			exitCode: 0,
-			untilPassed: true,
-		},
-	],
-};
+	iters: [makeIterRecord({ startedAt: 1_700_000_000_150, endedAt: 1_700_000_000_200 })],
+});
 
 describe('runManifest codec', () => {
 	it.effect('RunRecord roundtrips through parseJson', () =>
@@ -100,19 +86,18 @@ describe('atomicWriteString', () => {
 });
 
 describe('planResume', () => {
-	const stepRecord = (ord: number, stepId: string, status: StepRecord['status']): StepRecord => ({
-		ord,
-		stepId: StepId.make(stepId),
-		source: `./steps/${stepId}.md`,
-		harness: HarnessName.make('claude-code'),
-		maxIters: 1,
-		startedAt: 0,
-		status,
-		iters: [],
-	});
+	const stepRecord = (ord: number, stepId: string, status: StepRecord['status']): StepRecord =>
+		makeStepRecord({
+			ord,
+			stepId: makeStepId(stepId),
+			source: `./steps/${stepId}.md`,
+			startedAt: 0,
+			status,
+			iters: [],
+		});
 	const pipelineRef = (ord: number, stepId: string) => ({
 		ord,
-		stepId: StepId.make(stepId),
+		stepId: makeStepId(stepId),
 	});
 	const pipeline = [pipelineRef(0, 'plan'), pipelineRef(1, 'ralph'), pipelineRef(2, 'refactor')];
 

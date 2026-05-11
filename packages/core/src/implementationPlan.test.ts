@@ -4,13 +4,13 @@ import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
 import { Effect, Layer, Ref } from 'effect';
-import { RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
 import { LiveRunWorkspace } from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
 	harnessRegistryLayer,
 	InMemoryStepLoader,
+	makeRunId,
 	noopEventEmitter,
 	scriptedHarness,
 	scriptedUntilEvaluator,
@@ -28,7 +28,7 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 
 			const stepsMap = new Map([['./steps/plan.md', '---\nname: plan\n---\nWrite plan.']]);
 
-			const runId = RunId.make('plan-env-run');
+			const runId = makeRunId('plan-env-run');
 			const harness = scriptedHarness('claude-code', [{ stdout: 'plan written\n' }], {
 				onCall: (opts) => observed.push(opts),
 			});
@@ -44,7 +44,7 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
-				[{ id: 'plan', source: './steps/plan.md', options: {} }],
+				[{ kind: 'step', id: 'plan', source: './steps/plan.md', options: {} }],
 				{ prd: 'PRD', cwd: tmp },
 			).pipe(Effect.provide(layer));
 
@@ -66,7 +66,7 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 				['./steps/ralph.md', '---\nname: ralph\n---\nImplement.'],
 			]);
 
-			const runId = RunId.make('plan-flow-run');
+			const runId = makeRunId('plan-flow-run');
 			let callIndex = 0;
 			const harness = scriptedHarness(
 				'claude-code',
@@ -104,8 +104,8 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code', harnesses: [harness] },
 				[
-					{ id: 'plan', source: './steps/plan.md', options: {} },
-					{ id: 'ralph', source: './steps/ralph.md', options: {} },
+					{ kind: 'step', id: 'plan', source: './steps/plan.md', options: {} },
+					{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} },
 				],
 				{ prd: 'PRD', cwd: tmp },
 			).pipe(Effect.provide(layer));

@@ -27,6 +27,8 @@ import {
 	type HarnessSpawnError,
 	type RunRecordingError,
 } from './errors.ts';
+import { emitAndRecord, factoryHarnessEnv, resolvePermissions } from './pipelineHelpers.ts';
+import { runReview } from './review/runReview.ts';
 import { planResume, readStep, type ResumePlan } from './services/runManifest.ts';
 import { harnessOtelEnv } from './harnessOtelEnv.ts';
 import { HarnessName, PipelineName, type RunId, StepId } from './ids.ts';
@@ -51,9 +53,9 @@ import type {
 	Harness,
 	LoadedStep,
 	PermissionMode,
+	PipelineEntry,
 	ResumeOptions,
 	RunOptions,
-	StepEntry,
 	StepOptions,
 } from './types.ts';
 
@@ -70,27 +72,6 @@ interface RunStepArgs {
 	readonly idleTimeoutMs?: number;
 	readonly permissions: PermissionMode;
 }
-
-const factoryHarnessEnv = (runDir: string, cwd: string, runId: RunId): Record<string, string> => ({
-	FACTORY_RUN_DIR: runDir,
-	FACTORY_RUN_ID: runId,
-	FACTORY_RUN_SHORT_ID: runId.slice(0, 8),
-	FACTORY_PROJECT_PLAN: `${cwd}/IMPLEMENTATION_PLAN.md`,
-});
-
-const resolvePermissions = (
-	cliMode: PermissionMode | undefined,
-	step: LoadedStep,
-	stepOpts: StepOptions,
-	pipeline: FactoryOptions,
-	harness: Harness,
-): PermissionMode =>
-	cliMode ??
-	stepOpts.permissions ??
-	step.frontmatter.permissions ??
-	pipeline.permissions ??
-	harness.defaultPermissions ??
-	'prompt';
 
 const resolvePrdContent = (prd: string, cwd: string) =>
 	Effect.gen(function* () {
@@ -118,12 +99,6 @@ const resolvePrdContent = (prd: string, cwd: string) =>
 			),
 		);
 	});
-
-const emitAndRecord = (
-	emitter: EventEmitterService,
-	workspace: RunWorkspaceService,
-	event: FactoryEvent,
-) => Effect.zipRight(emitter.emit(event), workspace.appendEvent(event));
 
 interface StreamHarnessArgs {
 	readonly runId: RunId;
@@ -676,7 +651,7 @@ const runStep = (
 interface StepLoopArgs {
 	readonly runId: RunId;
 	readonly factoryOpts: FactoryOptions;
-	readonly steps: ReadonlyArray<StepEntry>;
+	readonly steps: ReadonlyArray<PipelineEntry>;
 	readonly cwd: string;
 	readonly prd: string;
 	readonly idleTimeoutMs: number | undefined;
@@ -706,6 +681,28 @@ const runStepLoop = (args: StepLoopArgs) =>
 			if (ord < skipBeforeOrd) {
 				yield* display.stepStart(stepId);
 				yield* display.stepEnd(stepId, true);
+				continue;
+			}
+			if (entry.kind === 'review') {
+				yield* runReview({
+					runId,
+					stepOrd: ord,
+					entry,
+					cwd,
+					prd,
+					defaultHarness,
+					factoryOpts,
+					permissionsOverride,
+				}).pipe(
+					recordTaggedError,
+					Effect.withSpan(`factory.step ${stepId}`, {
+						attributes: {
+							'factory.step': stepId,
+							'factory.step.kind': 'review',
+							'factory.run.id': runId,
+						},
+					}),
+				);
 				continue;
 			}
 			yield* Effect.gen(function* () {
@@ -793,7 +790,7 @@ const runStepLoop = (args: StepLoopArgs) =>
 
 export const runFactoryEffect = (
 	factoryOpts: FactoryOptions,
-	steps: ReadonlyArray<StepEntry>,
+	steps: ReadonlyArray<PipelineEntry>,
 	runOpts: RunOptions,
 ): Effect.Effect<
 	void,
@@ -952,7 +949,7 @@ const loadRecordedSteps = (runDir: string) =>
 
 export const resumeFactoryEffect = (
 	factoryOpts: FactoryOptions,
-	steps: ReadonlyArray<StepEntry>,
+	steps: ReadonlyArray<PipelineEntry>,
 	resumeOpts: ResumeOptions,
 ): Effect.Effect<
 	ResumePlan,

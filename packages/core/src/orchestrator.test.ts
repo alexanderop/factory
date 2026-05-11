@@ -1,20 +1,15 @@
-import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertInstanceOf, assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Layer, Ref } from 'effect';
-import { CapabilityMismatchError, type HarnessCapabilities } from './capabilities.ts';
+import { Cause, Effect, Exit, Ref } from 'effect';
+import { CapabilityMismatchError } from './capabilities.ts';
 import { StepMaxItersError, UnsupportedPermissionError } from './errors.ts';
-import { RunId } from './ids.ts';
 import { runFactoryEffect } from './orchestrator.ts';
-import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
-	harnessRegistryLayer,
-	InMemoryStepLoader,
-	recordingEventEmitter,
+	makeFullCapabilities,
+	makeHarnessCapabilities,
+	makeTestLayer,
 	scriptedHarness,
-	scriptedUntilEvaluator,
-	SilentDisplay,
 } from './testing/index.ts';
 import type { ExecOpts, FactoryEvent, PermissionMode } from './types.ts';
 
@@ -24,29 +19,6 @@ const fakeHarness = scriptedHarness('claude-code', [
 	{ stdout: 'iter-3-output\n' },
 	{ stdout: 'iter-4-output\n' },
 ]);
-
-const buildLayer = (
-	displayRef: Ref.Ref<ReadonlyArray<DisplayEntry>>,
-	eventsRef: Ref.Ref<ReadonlyArray<FactoryEvent>>,
-	steps: Iterable<readonly [string, string]>,
-	verdicts: ReadonlyArray<boolean>,
-) =>
-	Layer.mergeAll(
-		SilentDisplay.layer(displayRef),
-		recordingEventEmitter.layer(eventsRef),
-		harnessRegistryLayer([
-			scriptedHarness('claude-code', [
-				{ stdout: 'iter-1\n' },
-				{ stdout: 'iter-2\n' },
-				{ stdout: 'iter-3\n' },
-				{ stdout: 'iter-4\n' },
-				{ stdout: 'iter-5\n' },
-			]),
-		]),
-		InMemoryStepLoader.layer(new Map(steps)),
-		scriptedUntilEvaluator.layer(verdicts),
-		InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-	).pipe(Layer.provideMerge(NodeContext.layer));
 
 describe('runFactoryEffect', () => {
 	it.effect('runs every step once when no until is set, emitting lifecycle events in order', () =>
@@ -59,13 +31,13 @@ describe('runFactoryEffect', () => {
 				['./steps/ralph.md', '---\nname: ralph\n---\nIterate.'],
 			];
 
-			const layer = buildLayer(displayRef, eventsRef, steps, [true]);
+			const layer = makeTestLayer({ displayRef, eventsRef, stepFiles: steps, verdicts: [true] });
 
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code', harnesses: [fakeHarness] },
 				[
-					{ id: 'plan', source: './steps/plan.md', options: {} },
-					{ id: 'ralph', source: './steps/ralph.md', options: {} },
+					{ kind: 'step', id: 'plan', source: './steps/plan.md', options: {} },
+					{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} },
 				],
 				{ prd: 'inline PRD text', cwd: process.cwd() },
 			).pipe(Effect.provide(layer));
@@ -107,11 +79,16 @@ Iterate until done.`,
 			];
 
 			// false, false, true → success on iter 3
-			const layer = buildLayer(displayRef, eventsRef, steps, [false, false, true]);
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				stepFiles: steps,
+				verdicts: [false, false, true],
+			});
 
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code' },
-				[{ id: 'ralph', source: './steps/ralph.md', options: {} }],
+				[{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} }],
 				{ prd: 'inline PRD text', cwd: process.cwd() },
 			).pipe(Effect.provide(layer));
 
@@ -154,14 +131,13 @@ Iterate until done.`,
 					? `---\nname: only\n---\nDo it.`
 					: `---\nname: only\npermissions: ${args.frontmatterPermissions}\n---\nDo it.`;
 
-			const layer = Layer.mergeAll(
-				SilentDisplay.layer(displayRef),
-				recordingEventEmitter.layer(eventsRef),
-				harnessRegistryLayer([recordingHarness]),
-				InMemoryStepLoader.layer(new Map([['./steps/only.md', stepBody]])),
-				scriptedUntilEvaluator.layer([true]),
-				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-			).pipe(Layer.provideMerge(NodeContext.layer));
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				harnesses: [recordingHarness],
+				stepFiles: new Map([['./steps/only.md', stepBody]]),
+				verdicts: [true],
+			});
 
 			yield* runFactoryEffect(
 				{
@@ -171,6 +147,7 @@ Iterate until done.`,
 				},
 				[
 					{
+						kind: 'step',
 						id: 'only',
 						source: './steps/only.md',
 						options:
@@ -257,21 +234,17 @@ Iterate until done.`,
 						defaultPermissions: 'skip',
 					});
 
-					const layer = Layer.mergeAll(
-						SilentDisplay.layer(displayRef),
-						recordingEventEmitter.layer(eventsRef),
-						harnessRegistryLayer([narrowHarness]),
-						InMemoryStepLoader.layer(
-							new Map([['./steps/only.md', `---\nname: only\n---\nDo it.`]]),
-						),
-						scriptedUntilEvaluator.layer([true]),
-						InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-					).pipe(Layer.provideMerge(NodeContext.layer));
+					const layer = makeTestLayer({
+						displayRef,
+						eventsRef,
+						harnesses: [narrowHarness],
+						stepFiles: new Map([['./steps/only.md', `---\nname: only\n---\nDo it.`]]),
+					});
 
 					const exit = yield* Effect.exit(
 						runFactoryEffect(
 							{ name: 'sdd', harness: 'claude-code' },
-							[{ id: 'only', source: './steps/only.md', options: {} }],
+							[{ kind: 'step', id: 'only', source: './steps/only.md', options: {} }],
 							{
 								prd: 'inline PRD text',
 								cwd: process.cwd(),
@@ -297,41 +270,27 @@ Iterate until done.`,
 					const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
 
 					const calls: ExecOpts[] = [];
-					const limitedCaps: HarnessCapabilities = {
-						loadSession: false,
-						mcp: { http: false, sse: false },
-						prompt: { image: false, audio: false, embeddedContext: false },
-						session: { list: false, resume: false, close: false },
-						factory: {
-							permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
-							toolEvents: false,
-						},
-					};
 					const limitedHarness = scriptedHarness('claude-code', [{ stdout: 'never\n' }], {
-						capabilities: limitedCaps,
+						capabilities: makeHarnessCapabilities(),
 						onCall: (opts) => calls.push(opts),
 					});
 
-					const layer = Layer.mergeAll(
-						SilentDisplay.layer(displayRef),
-						recordingEventEmitter.layer(eventsRef),
-						harnessRegistryLayer([limitedHarness]),
-						InMemoryStepLoader.layer(
-							new Map([
-								[
-									'./steps/only.md',
-									`---\nname: only\nrequires:\n  session:\n    resume: true\n---\nDo it.`,
-								],
-							]),
-						),
-						scriptedUntilEvaluator.layer([true]),
-						InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-					).pipe(Layer.provideMerge(NodeContext.layer));
+					const layer = makeTestLayer({
+						displayRef,
+						eventsRef,
+						harnesses: [limitedHarness],
+						stepFiles: new Map([
+							[
+								'./steps/only.md',
+								`---\nname: only\nrequires:\n  session:\n    resume: true\n---\nDo it.`,
+							],
+						]),
+					});
 
 					const exit = yield* Effect.exit(
 						runFactoryEffect(
 							{ name: 'sdd', harness: 'claude-code' },
-							[{ id: 'only', source: './steps/only.md', options: {} }],
+							[{ kind: 'step', id: 'only', source: './steps/only.md', options: {} }],
 							{ prd: 'inline PRD text', cwd: process.cwd() },
 						).pipe(Effect.provide(layer)),
 					);
@@ -350,39 +309,25 @@ Iterate until done.`,
 				const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
 				const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
 
-				const fullCaps: HarnessCapabilities = {
-					loadSession: true,
-					mcp: { http: true, sse: true },
-					prompt: { image: true, audio: false, embeddedContext: true },
-					session: { list: true, resume: true, close: false },
-					factory: {
-						permissions: ['skip', 'accept-edits', 'read-only', 'prompt'],
-						toolEvents: true,
-					},
-				};
 				const harness = scriptedHarness('claude-code', [{ stdout: 'ok\n' }], {
-					capabilities: fullCaps,
+					capabilities: makeFullCapabilities(),
 				});
 
-				const layer = Layer.mergeAll(
-					SilentDisplay.layer(displayRef),
-					recordingEventEmitter.layer(eventsRef),
-					harnessRegistryLayer([harness]),
-					InMemoryStepLoader.layer(
-						new Map([
-							[
-								'./steps/only.md',
-								`---\nname: only\nrequires:\n  session:\n    resume: true\n  prompt:\n    image: true\n---\nDo it.`,
-							],
-						]),
-					),
-					scriptedUntilEvaluator.layer([true]),
-					InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-				).pipe(Layer.provideMerge(NodeContext.layer));
+				const layer = makeTestLayer({
+					displayRef,
+					eventsRef,
+					harnesses: [harness],
+					stepFiles: new Map([
+						[
+							'./steps/only.md',
+							`---\nname: only\nrequires:\n  session:\n    resume: true\n  prompt:\n    image: true\n---\nDo it.`,
+						],
+					]),
+				});
 
 				yield* runFactoryEffect(
 					{ name: 'sdd', harness: 'claude-code' },
-					[{ id: 'only', source: './steps/only.md', options: {} }],
+					[{ kind: 'step', id: 'only', source: './steps/only.md', options: {} }],
 					{ prd: 'inline PRD text', cwd: process.cwd() },
 				).pipe(Effect.provide(layer));
 
@@ -413,12 +358,17 @@ Iterate.`,
 				],
 			];
 
-			const layer = buildLayer(displayRef, eventsRef, steps, [false, false]);
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				stepFiles: steps,
+				verdicts: [false, false],
+			});
 
 			const exit = yield* Effect.exit(
 				runFactoryEffect(
 					{ name: 'sdd', harness: 'claude-code' },
-					[{ id: 'ralph', source: './steps/ralph.md', options: {} }],
+					[{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} }],
 					{ prd: 'inline PRD text', cwd: process.cwd() },
 				).pipe(Effect.provide(layer)),
 			);

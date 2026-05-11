@@ -9,6 +9,9 @@ export type RunStatus = typeof RunStatus.Type;
 export const StepStatus = Schema.Literal('running', 'ok', 'failed');
 export type StepStatus = typeof StepStatus.Type;
 
+export const RoleStatus = StepStatus;
+export type RoleStatus = StepStatus;
+
 export const IterRecord = Schema.Struct({
 	n: Schema.Number,
 	startedAt: Schema.Number,
@@ -19,6 +22,17 @@ export const IterRecord = Schema.Struct({
 	filesChanged: Schema.optional(Schema.Number),
 });
 export type IterRecord = typeof IterRecord.Type;
+
+export const RoleRecord = Schema.Struct({
+	name: Schema.String,
+	harness: HarnessName,
+	startedAt: Schema.Number,
+	endedAt: Schema.optional(Schema.Number),
+	status: RoleStatus,
+	findings: Schema.Number,
+	errorTag: Schema.optional(Schema.String),
+});
+export type RoleRecord = typeof RoleRecord.Type;
 
 export const StepRecord = Schema.Struct({
 	ord: Schema.Number,
@@ -31,6 +45,7 @@ export const StepRecord = Schema.Struct({
 	endedAt: Schema.optional(Schema.Number),
 	status: StepStatus,
 	iters: Schema.Array(IterRecord),
+	roles: Schema.optional(Schema.Array(RoleRecord)),
 });
 export type StepRecord = typeof StepRecord.Type;
 

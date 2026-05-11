@@ -98,6 +98,13 @@ export class ResumeUnavailableError extends Data.TaggedError('ResumeUnavailableE
 	readonly reason: 'already-complete' | 'not-found' | 'in-progress';
 }> {}
 
+/** Reading or parsing a role markdown file failed. */
+export class RoleLoadError extends Data.TaggedError('RoleLoadError')<{
+	readonly message: string;
+	readonly path: string;
+	readonly role: string;
+}> {}
+
 export type FactoryError =
 	| StepLoadError
 	| HarnessNotFoundError
@@ -113,4 +120,5 @@ export type FactoryError =
 	| UnsupportedPermissionError
 	| CapabilityMismatchError
 	| ResumeMismatchError
-	| ResumeUnavailableError;
+	| ResumeUnavailableError
+	| RoleLoadError;

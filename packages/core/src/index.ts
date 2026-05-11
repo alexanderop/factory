@@ -18,6 +18,7 @@ export {
 	PrdLoadError,
 	ResumeMismatchError,
 	ResumeUnavailableError,
+	RoleLoadError,
 	RunRecordingError,
 	StepIdleTimeoutError,
 	StepLoadError,
@@ -85,6 +86,7 @@ export {
 	UntilEvaluator,
 	type UntilEvaluatorService,
 } from './services/UntilEvaluator.ts';
+export { Finding, Findings, FindingsJson, RoleFinding, Severity } from './review/finding.ts';
 export { createSubprocessHarness, type SubprocessHarnessConfig } from './subprocess.ts';
 export { PermissionMode } from './types.ts';
 export type {
@@ -98,7 +100,13 @@ export type {
 	HarnessExecRequirements,
 	HarnessTokenUsage,
 	LoadedStep,
+	PipelineEntry,
 	ResumeOptions,
+	ReviewEntry,
+	ReviewSpec,
+	RoleEntry,
+	RoleOptions,
+	RoleSpec,
 	RunOptions,
 	RunState,
 	StepEntry,

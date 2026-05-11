@@ -1,21 +1,14 @@
-import { NodeContext } from '@effect/platform-node';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Effect, Layer, Ref } from 'effect';
+import { Effect, Ref } from 'effect';
 import { runFactoryEffect } from './orchestrator.ts';
-import { RunId } from './ids.ts';
-import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
 	getFinishedSpans,
-	harnessRegistryLayer,
-	InMemoryStepLoader,
+	makeTestLayer,
 	OtelTestLayer,
-	recordingEventEmitter,
 	scriptedHarness,
-	scriptedUntilEvaluator,
-	SilentDisplay,
 } from './testing/index.ts';
 import type { FactoryEvent } from './types.ts';
 
@@ -33,33 +26,30 @@ describe('span tree', () => {
 			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
 			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
 
-			const layer = Layer.mergeAll(
-				SilentDisplay.layer(displayRef),
-				recordingEventEmitter.layer(eventsRef),
-				harnessRegistryLayer([
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				harnesses: [
 					scriptedHarness('claude-code', [
 						{ stdout: 'plan-out\n' },
 						{ stdout: 'branch-out\n' },
 						{ stdout: 'ralph-out\n' },
 					]),
+				],
+				stepFiles: new Map([
+					['./steps/plan.md', '---\nname: plan\n---\nPlan it.'],
+					['./steps/branch.md', '---\nname: branch\n---\nBranch it.'],
+					['./steps/ralph.md', '---\nname: ralph\n---\nRalph it.'],
 				]),
-				InMemoryStepLoader.layer(
-					new Map([
-						['./steps/plan.md', '---\nname: plan\n---\nPlan it.'],
-						['./steps/branch.md', '---\nname: branch\n---\nBranch it.'],
-						['./steps/ralph.md', '---\nname: ralph\n---\nRalph it.'],
-					]),
-				),
-				scriptedUntilEvaluator.layer([true, true, true]),
-				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-			).pipe(Layer.provideMerge(NodeContext.layer));
+				verdicts: [true, true, true],
+			});
 
 			yield* runFactoryEffect(
 				{ name: 'effect-review', harness: 'claude-code' },
 				[
-					{ id: '00-plan', source: './steps/plan.md', options: {} },
-					{ id: '01-branch', source: './steps/branch.md', options: {} },
-					{ id: '02-ralph', source: './steps/ralph.md', options: {} },
+					{ kind: 'step', id: '00-plan', source: './steps/plan.md', options: {} },
+					{ kind: 'step', id: '01-branch', source: './steps/branch.md', options: {} },
+					{ kind: 'step', id: '02-ralph', source: './steps/ralph.md', options: {} },
 				],
 				{ prd: 'inline PRD text', cwd: process.cwd(), permissions: 'skip' },
 			).pipe(Effect.provide(layer));
@@ -98,31 +88,28 @@ describe('span tree', () => {
 			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
 			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
 
-			const layer = Layer.mergeAll(
-				SilentDisplay.layer(displayRef),
-				recordingEventEmitter.layer(eventsRef),
-				harnessRegistryLayer([
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				harnesses: [
 					scriptedHarness('claude-code', [
 						{ stdout: 'iter-1\n' },
 						{ stdout: 'iter-2\n' },
 						{ stdout: 'iter-3\n' },
 					]),
+				],
+				stepFiles: new Map([
+					[
+						'./steps/ralph.md',
+						`---\nname: ralph\nuntil: "output contains: DONE"\nmaxIters: 3\n---\nIterate.`,
+					],
 				]),
-				InMemoryStepLoader.layer(
-					new Map([
-						[
-							'./steps/ralph.md',
-							`---\nname: ralph\nuntil: "output contains: DONE"\nmaxIters: 3\n---\nIterate.`,
-						],
-					]),
-				),
-				scriptedUntilEvaluator.layer([false, false, true]),
-				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-			).pipe(Layer.provideMerge(NodeContext.layer));
+				verdicts: [false, false, true],
+			});
 
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code' },
-				[{ id: '02-ralph', source: './steps/ralph.md', options: {} }],
+				[{ kind: 'step', id: '02-ralph', source: './steps/ralph.md', options: {} }],
 				{ prd: 'inline PRD text', cwd: process.cwd(), permissions: 'skip' },
 			).pipe(Effect.provide(layer));
 

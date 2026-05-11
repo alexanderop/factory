@@ -210,10 +210,50 @@ export interface ResumeOptions {
 }
 
 export interface StepEntry {
+	readonly kind: 'step';
 	readonly id: string;
 	readonly source: string;
 	readonly options: StepOptions;
 }
+
+export interface RoleOptions<Names extends string = string> {
+	readonly harness?: Names;
+	readonly permissions?: PermissionMode;
+	readonly requires?: StepRequirements;
+}
+
+export interface RoleEntry {
+	readonly id: string;
+	readonly source: string;
+	readonly options: RoleOptions;
+}
+
+export interface ReviewEntry {
+	readonly kind: 'review';
+	readonly id: string;
+	readonly roles: ReadonlyArray<RoleEntry>;
+	readonly aggregate: RoleEntry | undefined;
+	readonly concurrency: number | undefined;
+	readonly options: StepOptions;
+}
+
+export interface RoleSpec<Names extends string = string> {
+	readonly id: string;
+	readonly source: string;
+	readonly harness?: Names;
+	readonly permissions?: PermissionMode;
+	readonly requires?: StepRequirements;
+}
+
+export interface ReviewSpec<Names extends string = string> {
+	readonly roles: ReadonlyArray<RoleSpec<Names>>;
+	readonly aggregate?: RoleSpec<Names>;
+	readonly concurrency?: number;
+	readonly harness?: Names;
+	readonly permissions?: PermissionMode;
+}
+
+export type PipelineEntry = StepEntry | ReviewEntry;
 
 export interface Factory<Names extends string = string, StepIds extends string = never> {
 	readonly name: string;
@@ -221,6 +261,10 @@ export interface Factory<Names extends string = string, StepIds extends string =
 		id: Exclude<Id, StepIds>,
 		source: string,
 		options?: StepOptions<Names>,
+	) => Factory<Names, StepIds | Id>;
+	readonly review: <Id extends string>(
+		id: Exclude<Id, StepIds>,
+		spec: ReviewSpec<Names>,
 	) => Factory<Names, StepIds | Id>;
 	readonly run: (options: RunOptions) => Promise<void>;
 	readonly runEffect: (options: RunOptions) => Effect.Effect<void, FactoryError>;

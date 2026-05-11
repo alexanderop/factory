@@ -8,6 +8,7 @@ export { harnessRegistryLayer } from '../services/HarnessRegistry.ts';
 export { InMemoryRunWorkspace } from '../services/RunWorkspace.ts';
 export { InMemoryStepLoader } from '../services/StepLoader.ts';
 export { scriptedUntilEvaluator } from '../services/UntilEvaluator.ts';
+export * from './factories.ts';
 export { assertHelpSnapshot, type HelpSnapshotArgs } from './helpSnapshot.ts';
 export {
 	getFinishedSpans,

@@ -1,19 +1,12 @@
-import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { assertTrue, strictEqual } from '@effect/vitest/utils';
-import { Cause, Effect, Exit, Layer, Metric, Ref } from 'effect';
+import { Cause, Effect, Exit, Metric, Ref } from 'effect';
 import { runFactoryEffect } from './orchestrator.ts';
-import { RunId } from './ids.ts';
-import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
-	harnessRegistryLayer,
-	InMemoryStepLoader,
+	makeTestLayer,
 	OtelTestLayer,
-	recordingEventEmitter,
 	scriptedHarness,
-	scriptedUntilEvaluator,
-	SilentDisplay,
 } from './testing/index.ts';
 import type { FactoryEvent, HarnessEvent } from './types.ts';
 
@@ -42,18 +35,16 @@ describe('factory metrics', () => {
 			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
 			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
 
-			const layer = Layer.mergeAll(
-				SilentDisplay.layer(displayRef),
-				recordingEventEmitter.layer(eventsRef),
-				harnessRegistryLayer([scriptedHarness('claude-code', [{ stdout: 'iter-1\n' }])]),
-				InMemoryStepLoader.layer(new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']])),
-				scriptedUntilEvaluator.layer([true]),
-				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-			).pipe(Layer.provideMerge(NodeContext.layer));
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				harnesses: [scriptedHarness('claude-code', [{ stdout: 'iter-1\n' }])],
+				stepFiles: new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']]),
+			});
 
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code' },
-				[{ id: 'only', source: './steps/only.md', options: {} }],
+				[{ kind: 'step', id: 'only', source: './steps/only.md', options: {} }],
 				{ prd: 'inline PRD text', cwd: process.cwd() },
 			).pipe(Effect.provide(layer));
 
@@ -106,18 +97,16 @@ describe('factory metrics', () => {
 				},
 			];
 
-			const layer = Layer.mergeAll(
-				SilentDisplay.layer(displayRef),
-				recordingEventEmitter.layer(eventsRef),
-				harnessRegistryLayer([scriptedHarness('claude-code', [{ events: script }])]),
-				InMemoryStepLoader.layer(new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']])),
-				scriptedUntilEvaluator.layer([true]),
-				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-			).pipe(Layer.provideMerge(NodeContext.layer));
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				harnesses: [scriptedHarness('claude-code', [{ events: script }])],
+				stepFiles: new Map([['./steps/only.md', '---\nname: only\n---\nDo it.']]),
+			});
 
 			yield* runFactoryEffect(
 				{ name: 'sdd', harness: 'claude-code' },
-				[{ id: 'only', source: './steps/only.md', options: {} }],
+				[{ kind: 'step', id: 'only', source: './steps/only.md', options: {} }],
 				{ prd: 'inline PRD text', cwd: process.cwd() },
 			).pipe(Effect.provide(layer));
 
@@ -151,26 +140,23 @@ describe('factory metrics', () => {
 			const displayRef = yield* Ref.make<ReadonlyArray<DisplayEntry>>([]);
 			const eventsRef = yield* Ref.make<ReadonlyArray<FactoryEvent>>([]);
 
-			const layer = Layer.mergeAll(
-				SilentDisplay.layer(displayRef),
-				recordingEventEmitter.layer(eventsRef),
-				harnessRegistryLayer([scriptedHarness('claude-code', [{ stdout: 'nope\n' }])]),
-				InMemoryStepLoader.layer(
-					new Map([
-						[
-							'./steps/ralph.md',
-							`---\nname: ralph\nuntil: "output contains: DONE"\nmaxIters: 1\n---\nIterate.`,
-						],
-					]),
-				),
-				scriptedUntilEvaluator.layer([false]),
-				InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
-			).pipe(Layer.provideMerge(NodeContext.layer));
+			const layer = makeTestLayer({
+				displayRef,
+				eventsRef,
+				harnesses: [scriptedHarness('claude-code', [{ stdout: 'nope\n' }])],
+				stepFiles: new Map([
+					[
+						'./steps/ralph.md',
+						`---\nname: ralph\nuntil: "output contains: DONE"\nmaxIters: 1\n---\nIterate.`,
+					],
+				]),
+				verdicts: [false],
+			});
 
 			const exit = yield* Effect.exit(
 				runFactoryEffect(
 					{ name: 'sdd', harness: 'claude-code' },
-					[{ id: 'ralph', source: './steps/ralph.md', options: {} }],
+					[{ kind: 'step', id: 'ralph', source: './steps/ralph.md', options: {} }],
 					{ prd: 'inline PRD text', cwd: process.cwd() },
 				).pipe(Effect.provide(layer)),
 			);

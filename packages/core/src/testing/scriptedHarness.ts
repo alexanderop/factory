@@ -1,8 +1,17 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join } from 'node:path';
 import { Effect, Stream } from 'effect';
 import type { HarnessCapabilities } from '../capabilities.ts';
 import { HarnessExecError } from '../errors.ts';
 import { HarnessName } from '../ids.ts';
 import type { ExecOpts, ExecResult, Harness, HarnessEvent, PermissionMode } from '../types.ts';
+
+export interface ScriptedWrite {
+	/** Path to write. Relative paths are resolved against `env.FACTORY_RUN_DIR`
+	 *  (preferred) or `opts.cwd` if no run dir is set. */
+	readonly path: string;
+	readonly content: string;
+}
 
 export interface ScriptedResponse {
 	readonly stdout?: string;
@@ -14,6 +23,12 @@ export interface ScriptedResponse {
 	 * stream-json.
 	 */
 	readonly events?: ReadonlyArray<HarnessEvent>;
+	/**
+	 * Files to materialise on disk before the response's `exit` event. Mirrors
+	 * the way real harnesses leave artifacts under `FACTORY_RUN_DIR` (e.g. a
+	 * plan step writing `plan.md`, a review role writing `findings.json`).
+	 */
+	readonly writes?: ReadonlyArray<ScriptedWrite>;
 }
 
 export interface ScriptedHarnessOptions {
@@ -33,23 +48,46 @@ const defaultCapabilities = (permissions: ReadonlyArray<PermissionMode>): Harnes
 	factory: { permissions, toolEvents: false },
 });
 
+export type ScriptedResponder = (opts: ExecOpts) => ScriptedResponse;
+
 /**
- * Test double for `Harness`. Cycles through `responses` on each `exec`/`stream`
- * call. Use via `harnessRegistryLayer([scriptedHarness('claude-code', [...])])`.
+ * Test double for `Harness`. Either:
+ *  - Cycles through `responses` on each `exec`/`stream` call (positional).
+ *  - Or routes each call through a `responder` function that picks a response
+ *    based on `ExecOpts` — use this when tests fan out concurrently and the
+ *    call order is non-deterministic.
  */
 export const scriptedHarness = <Name extends string>(
 	name: Name,
-	responses: ReadonlyArray<ScriptedResponse>,
+	responses: ReadonlyArray<ScriptedResponse> | ScriptedResponder,
 	options: ScriptedHarnessOptions = {},
 ): Harness<Name> => {
 	let cursor = 0;
-	const next = (): ScriptedResponse => {
+	const next = (opts: ExecOpts): ScriptedResponse => {
+		if (typeof responses === 'function') return responses(opts);
 		const r = responses[cursor % Math.max(responses.length, 1)] ?? {};
 		cursor++;
 		return r;
 	};
 
 	const capabilities = options.capabilities ?? defaultCapabilities(options.supports ?? ALL_MODES);
+
+	const resolveWritePath = (write: ScriptedWrite, opts: ExecOpts): string => {
+		if (isAbsolute(write.path)) return write.path;
+		const base = opts.env?.FACTORY_RUN_DIR ?? opts.cwd ?? process.cwd();
+		return join(base, write.path);
+	};
+
+	const materialiseWrites = (writes: ReadonlyArray<ScriptedWrite>, opts: ExecOpts) =>
+		Effect.promise(() =>
+			Promise.all(
+				writes.map(async (w) => {
+					const resolved = resolveWritePath(w, opts);
+					await mkdir(dirname(resolved), { recursive: true });
+					await writeFile(resolved, w.content);
+				}),
+			),
+		);
 
 	return {
 		name,
@@ -58,7 +96,8 @@ export const scriptedHarness = <Name extends string>(
 		exec: (opts: ExecOpts) =>
 			Effect.gen(function* () {
 				options.onCall?.(opts);
-				const r = next();
+				const r = next(opts);
+				if (r.writes && r.writes.length > 0) yield* materialiseWrites(r.writes, opts);
 				const result: ExecResult = {
 					exitCode: r.exitCode ?? 0,
 					stdout: r.stdout ?? '',
@@ -78,7 +117,7 @@ export const scriptedHarness = <Name extends string>(
 			}),
 		stream: (opts: ExecOpts) => {
 			options.onCall?.(opts);
-			const r = next();
+			const r = next(opts);
 			const events: HarnessEvent[] = [];
 			if (r.events) {
 				events.push(...r.events);
@@ -95,7 +134,12 @@ export const scriptedHarness = <Name extends string>(
 				}
 			}
 			events.push({ type: 'exit', code: r.exitCode ?? 0 });
-			return Stream.fromIterable(events);
+			const eventStream = Stream.fromIterable(events);
+			return r.writes && r.writes.length > 0
+				? Stream.fromEffect(materialiseWrites(r.writes, opts)).pipe(
+						Stream.flatMap(() => eventStream),
+					)
+				: eventStream;
 		},
 	};
 };

@@ -14,9 +14,12 @@ import type {
 	Factory,
 	FactoryOptions,
 	Harness,
+	PipelineEntry,
 	ResumeOptions,
+	ReviewSpec,
+	RoleEntry,
+	RoleSpec,
 	RunOptions,
-	StepEntry,
 	StepOptions,
 } from './types.ts';
 
@@ -53,23 +56,28 @@ const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RuntimeOpts, ctx: Runt
 	).pipe(Layer.provideMerge(NodeContext.layer));
 };
 
+const normaliseRole = <Names extends string>(spec: RoleSpec<Names>): RoleEntry => {
+	const { id, source, ...rest } = spec;
+	return { id, source, options: rest };
+};
+
 export function factory<const Hs extends ReadonlyArray<Harness>>(
 	opts: FactoryOptions<Hs[number]['name']> & { readonly harnesses?: Hs },
 ): Factory<Hs[number]['name']> {
 	type Names = Hs[number]['name'];
-	const steps: StepEntry[] = [];
+	const entries: PipelineEntry[] = [];
 
 	const runEffect = (runOpts: RunOptions) => {
 		const runId = RunId.make(randomUUID());
 		const cwd = runOpts.cwd ?? process.cwd();
-		return runFactoryEffect(opts, steps, runOpts).pipe(
+		return runFactoryEffect(opts, entries, runOpts).pipe(
 			Effect.provide(buildRuntimeLayer(opts, runOpts, { runId, cwd, resume: false })),
 		);
 	};
 
 	const resumeEffect = (resumeOpts: ResumeOptions) => {
 		const cwd = resumeOpts.cwd ?? process.cwd();
-		return resumeFactoryEffect(opts, steps, resumeOpts).pipe(
+		return resumeFactoryEffect(opts, entries, resumeOpts).pipe(
 			Effect.provide(
 				buildRuntimeLayer(opts, resumeOpts, { runId: resumeOpts.runId, cwd, resume: true }),
 			),
@@ -83,7 +91,21 @@ export function factory<const Hs extends ReadonlyArray<Harness>>(
 			source: string,
 			stepOptions?: StepOptions<Names>,
 		) {
-			steps.push({ id, source, options: stepOptions ?? {} });
+			entries.push({ kind: 'step', id, source, options: stepOptions ?? {} });
+			return make<StepIds | Id>();
+		},
+		review<Id extends string>(id: Exclude<Id, StepIds>, spec: ReviewSpec<Names>) {
+			entries.push({
+				kind: 'review',
+				id,
+				roles: spec.roles.map((r) => normaliseRole(r)),
+				aggregate: spec.aggregate ? normaliseRole(spec.aggregate) : undefined,
+				concurrency: spec.concurrency,
+				options: {
+					...(spec.harness === undefined ? {} : { harness: spec.harness }),
+					...(spec.permissions === undefined ? {} : { permissions: spec.permissions }),
+				},
+			});
 			return make<StepIds | Id>();
 		},
 		runEffect,
