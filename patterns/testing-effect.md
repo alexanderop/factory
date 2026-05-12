@@ -190,6 +190,69 @@ Prefer `fs.makeTempDirectoryScoped()` over `mkdtempSync` + `afterAll(rmSync)`.
 The scoped variant releases on fiber interrupt, so a flaky test won't leak
 directories between runs.
 
+## Virtual time: `TestClock`
+
+`it.effect` and `it.scoped` auto-provide `TestServices`, which includes a
+`TestClock`. Use it to advance virtual time deterministically instead of
+real-sleeping. This is the Effect-native alternative to wall-clock `delay`s
+in `ScriptedResponse`.
+
+```ts
+import { describe, it } from '@effect/vitest';
+import { assertSuccess } from '@effect/vitest/utils';
+import { Effect, TestClock } from 'effect';
+
+it.effect('completes after 1 day of virtual time', () =>
+  Effect.gen(function* () {
+    const fiber = yield* program.pipe(Effect.fork);
+    yield* TestClock.adjust('1 day');
+    const exit = yield* fiber.await;
+    assertSuccess(exit, expectedResult);
+  }),
+);
+```
+
+Two timing dials, not one:
+
+- **`TestClock.adjust(duration)`** — when the test cares about _timing
+  semantics_: schedule firing, retry backoff, timeout triggering. The fiber
+  sleeps in virtual time and returns immediately in wall-clock time.
+- **`ScriptedResponse.delay`** — when the test cares about _what happens
+  during a real-time gap_: cancelling an in-flight call, racing two harness
+  invocations, asserting on interruption ordering. Stays on the wall clock
+  because we're asserting on real fiber interruption.
+
+If a test needs `it.effect`'s ergonomics but explicitly _doesn't_ want
+`TestClock` (e.g. exercising a real third-party retry), use `it.live` —
+same shape, no auto-injected `TestServices`.
+
+## Live mode and flaky retries
+
+`@effect/vitest` exposes a few less-common entry points worth knowing:
+
+| Tester          | When to reach for it                                                                                                                                                                |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `it.live`       | The test must run against real clocks / real `Random` / real services — `TestServices` would break it.                                                                              |
+| `it.scopedLive` | `it.live` + `Scope` for resource acquisition.                                                                                                                                       |
+| `it.flakyTest`  | Wraps an `Effect` so vitest retries it for up to a timeout (default `Schedule.recurs(10)`). For genuinely flaky externalities (network, third-party). Don't use to paper over bugs. |
+
+Example, from `repos/effect/packages/platform/test/HttpClient.test.ts:64`:
+
+```ts
+it.effect('hits google.com', () =>
+  Effect.gen(function* () {
+    const response = yield* HttpClient.get('https://www.google.com/').pipe(
+      Effect.flatMap((_) => _.text),
+    );
+    assertInclude(response, 'Google');
+  }).pipe(it.flakyTest, Effect.provide(FetchHttpClient.layer)),
+);
+```
+
+Naming caveat: `it.flakyTest` retries the **test**; `flakeyHarness` (this
+repo) builds a harness that **fails after N calls**. Different concepts,
+similar names — read the import line.
+
 ## Sharing a layer: `it.layer`
 
 When several `it.effect` blocks want the same fixture, hoist it with
@@ -219,6 +282,56 @@ Each inner `it.effect` still runs with its own fiber, so there's no
 cross-test bleed — `it.layer` just memoises construction. Don't reach for
 this until two or more tests _genuinely_ want the same inputs; per-test
 `Effect.provide(buildLayer(...))` is fine and often clearer when inputs vary.
+
+`it.layer` blocks **nest**, and inner blocks merge layers with outer ones —
+useful when a `describe` shares the orchestrator rig and inner blocks vary
+one service:
+
+```ts
+it.layer(baseRig)(({ it }) => {
+  it.effect('happy path', () => /* uses base rig */);
+
+  it.layer(scriptedUntilEvaluator.layer([false, true]))(({ it }) => {
+    it.effect('two iterations then stop', () => /* base + overridden verdicts */);
+  });
+});
+```
+
+## Property tests with `it.prop`
+
+`@effect/vitest` ships `it.prop` (and `it.effect.prop` / `it.scoped.prop`)
+for FastCheck-driven property tests. Use `Schema` or `FastCheck` arbitraries
+interchangeably:
+
+```ts
+import { describe, it } from '@effect/vitest';
+import { Effect, FastCheck, Schema } from 'effect';
+
+it.effect.prop(
+  'RunId round-trips through decode/encode',
+  { raw: Schema.String.pipe(Schema.minLength(1)) },
+  ({ raw }) =>
+    Effect.gen(function* () {
+      const id = yield* Schema.decode(RunId)(raw);
+      return Schema.encode(RunId)(id) === raw;
+    }),
+);
+```
+
+Where property tests earn their keep in this repo:
+
+- Branded ID parsing in `packages/core/src/ids.ts` (round-trip, rejection of
+  malformed inputs).
+- `Schema.decodeUnknown` at the orchestrator boundary — generate noise,
+  assert "either decodes cleanly or fails with `ParseError`."
+- Combinatorial harness output: generate `events[]` permutations and assert
+  the orchestrator's invariant ("non-zero `exit` always surfaces a tagged
+  failure").
+
+Don't reach for property tests when the failure mode you care about is one
+specific malformed shape — write a unit case in
+`orchestrator-malformed.test.ts`. Properties pay off when the _space_ of
+inputs is what matters, not a single point in it.
 
 ## Assertions: `@effect/vitest/utils`
 
