@@ -2,15 +2,18 @@ import { FileSystem } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import { describe, it } from '@effect/vitest';
 import { deepStrictEqual, strictEqual } from '@effect/vitest/utils';
-import { Effect, Exit } from 'effect';
+import { Arbitrary, Effect, Exit } from 'effect';
 import { ResumeMismatchError, RunRecordingError } from './errors.ts';
 import {
 	atomicWriteString,
 	decodeRun,
+	decodeStep,
 	encodeRun,
+	encodeStep,
 	planResume,
 	readStep,
-	type StepRecord,
+	RunRecord,
+	StepRecord,
 	writeRun,
 	writeStep,
 } from './services/runManifest.ts';
@@ -181,5 +184,53 @@ describe('writeRun + writeStep + readStep', () => {
 			strictEqual(decoded.id, sampleRun.id);
 			strictEqual(decoded.status, 'ok');
 		}).pipe(Effect.provide(NodeContext.layer)),
+	);
+});
+
+// `RunRecord` / `StepRecord` use `Schema.Number` for timestamps / counters, but
+// JSON can't round-trip NaN / Infinity (`JSON.stringify(NaN) === 'null'`). We
+// filter generated values to finite numbers so the test exercises the codec,
+// not `JSON`'s lossy treatment of non-finites.
+//
+// We assert codec involution (encode → decode → encode produces the same JSON)
+// instead of `deepStrictEqual(decoded, original)` because `Schema.optional`
+// drops keys whose value is `undefined`, while the arbitrary may generate them
+// explicitly — that's a difference in representation, not semantics.
+
+const allNumbersFinite = (value: unknown): boolean => {
+	if (typeof value === 'number') return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every(allNumbersFinite);
+	if (value !== null && typeof value === 'object') {
+		return Object.values(value).every(allNumbersFinite);
+	}
+	return true;
+};
+
+const runRecordArb = Arbitrary.make(RunRecord).filter(allNumbersFinite);
+const stepRecordArb = Arbitrary.make(StepRecord).filter(allNumbersFinite);
+
+describe('runManifest codec properties', () => {
+	it.effect.prop(
+		'RunRecord codec is involutive (encodeRun → decodeRun → encodeRun is idempotent)',
+		{ value: runRecordArb },
+		({ value }) =>
+			Effect.gen(function* () {
+				const json1 = yield* encodeRun(value);
+				const decoded = yield* decodeRun(json1);
+				const json2 = yield* encodeRun(decoded);
+				strictEqual(json2, json1);
+			}),
+	);
+
+	it.effect.prop(
+		'StepRecord codec is involutive (encodeStep → decodeStep → encodeStep is idempotent)',
+		{ value: stepRecordArb },
+		({ value }) =>
+			Effect.gen(function* () {
+				const json1 = yield* encodeStep(value);
+				const decoded = yield* decodeStep(json1);
+				const json2 = yield* encodeStep(decoded);
+				strictEqual(json2, json1);
+			}),
 	);
 });
