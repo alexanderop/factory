@@ -1,5 +1,5 @@
 import { FileSystem, Path } from '@effect/platform';
-import { Clock, Context, Effect, Layer } from 'effect';
+import { Clock, Context, Effect, Layer, Ref } from 'effect';
 import { RunRecordingError } from '../errors.ts';
 import type { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
 import type { FactoryEvent } from '../types.ts';
@@ -142,7 +142,7 @@ const iterKey = (stepOrd: number, n: number): string => `${stepOrd}-${n}`;
 interface StepEntry {
 	readonly dir: string;
 	readonly path: string;
-	record: StepRecord;
+	readonly record: StepRecord;
 }
 
 interface MakeServiceArgs {
@@ -162,302 +162,342 @@ const makeService = ({
 	fs,
 	path,
 	hydrated,
-}: MakeServiceArgs): RunWorkspaceService => {
-	const stepEntries = new Map<number, StepEntry>();
-	const iterPathsByKey = new Map<string, IterPaths>();
-	const runPath = path.join(runDir, 'run.json');
-	const eventsPath = path.join(runDir, 'events.jsonl');
-	// Roles fan out concurrently — serialise persistence to keep the
-	// read-modify-write of `entry.record.roles` atomic and avoid clobbering
-	// the per-step `step.json.tmp.<pid>` file from parallel fibers.
-	const roleMutex = Effect.unsafeMakeSemaphore(1);
-	let runRecord: RunRecord | undefined = hydrated?.runRecord;
-	if (hydrated) {
-		for (const entry of hydrated.stepEntries) {
-			stepEntries.set(entry.record.ord, entry);
-		}
-	}
+}: MakeServiceArgs): Effect.Effect<RunWorkspaceService> =>
+	Effect.gen(function* () {
+		const runPath = path.join(runDir, 'run.json');
+		const eventsPath = path.join(runDir, 'events.jsonl');
 
-	const provideFs = Effect.provideService(FileSystem.FileSystem, fs);
-	const writeRun = (p: string, value: RunRecord) => writeRunEffect(p, value).pipe(provideFs);
-	const writeStep = (p: string, value: StepRecord) => writeStepEffect(p, value).pipe(provideFs);
-	const writeIter = (p: string, value: IterRecord) => writeIterEffect(p, value).pipe(provideFs);
+		// Roles fan out concurrently — serialise persistence so the per-step
+		// read-modify-write-and-disk-write is atomic and parallel fibers don't
+		// clobber the same `step.json.tmp.<pid>` file. `Effect.makeSemaphore`
+		// (vs. `unsafeMakeSemaphore`) keeps allocation inside the Effect
+		// runtime so it composes with finalizers and tracing.
+		const roleMutex = yield* Effect.makeSemaphore(1);
+		// `Ref` for state instead of `let` + mutable Maps so concurrent writes
+		// go through a serialisable update primitive rather than relying on
+		// JS's lack of preemption between statements.
+		const runRecordRef = yield* Ref.make<RunRecord | undefined>(hydrated?.runRecord);
+		const stepEntriesRef = yield* Ref.make<ReadonlyMap<number, StepEntry>>(
+			new Map(hydrated?.stepEntries.map((e) => [e.record.ord, e] as const) ?? []),
+		);
+		const iterPathsRef = yield* Ref.make<ReadonlyMap<string, IterPaths>>(new Map());
 
-	const ensureDir = (dir: string) =>
-		fs
-			.makeDirectory(dir, { recursive: true })
-			.pipe(Effect.mapError(toRecordingError(`failed to create ${dir}`, dir)));
+		const provideFs = Effect.provideService(FileSystem.FileSystem, fs);
+		const writeRun = (p: string, value: RunRecord) => writeRunEffect(p, value).pipe(provideFs);
+		const writeStep = (p: string, value: StepRecord) => writeStepEffect(p, value).pipe(provideFs);
+		const writeIter = (p: string, value: IterRecord) => writeIterEffect(p, value).pipe(provideFs);
 
-	const writeFile = (filePath: string, content: string) =>
-		fs
-			.writeFileString(filePath, content)
-			.pipe(Effect.mapError(toRecordingError(`failed to write ${filePath}`, filePath)));
+		const ensureDir = (dir: string) =>
+			fs
+				.makeDirectory(dir, { recursive: true })
+				.pipe(Effect.mapError(toRecordingError(`failed to create ${dir}`, dir)));
 
-	const appendLine = (filePath: string, line: string) =>
-		fs
-			.writeFileString(filePath, `${line}\n`, { flag: 'a' })
-			.pipe(Effect.mapError(toRecordingError(`failed to append ${filePath}`, filePath)));
+		const writeFile = (filePath: string, content: string) =>
+			fs
+				.writeFileString(filePath, content)
+				.pipe(Effect.mapError(toRecordingError(`failed to write ${filePath}`, filePath)));
 
-	const requireRun = (): Effect.Effect<RunRecord, RunRecordingError> =>
-		runRecord === undefined
-			? Effect.fail(
-					new RunRecordingError({
-						message: 'run not started; call recordRunStart first',
-						path: runPath,
-					}),
-				)
-			: Effect.succeed(runRecord);
+		const appendLine = (filePath: string, line: string) =>
+			fs
+				.writeFileString(filePath, `${line}\n`, { flag: 'a' })
+				.pipe(Effect.mapError(toRecordingError(`failed to append ${filePath}`, filePath)));
 
-	const persistStep = (entry: StepEntry) => writeStep(entry.path, entry.record);
+		const requireRun = (): Effect.Effect<RunRecord, RunRecordingError> =>
+			Ref.get(runRecordRef).pipe(
+				Effect.flatMap((current) =>
+					current === undefined
+						? Effect.fail(
+								new RunRecordingError({
+									message: 'run not started; call recordRunStart first',
+									path: runPath,
+								}),
+							)
+						: Effect.succeed(current),
+				),
+			);
 
-	const requireStep = (ord: number, op: string): Effect.Effect<StepEntry, RunRecordingError> => {
-		const entry = stepEntries.get(ord);
-		return entry === undefined
-			? Effect.fail(
-					new RunRecordingError({
-						message: `cannot ${op}: step ${ord} not started`,
-					}),
-				)
-			: Effect.succeed(entry);
-	};
+		const persistStep = (entry: StepEntry) => writeStep(entry.path, entry.record);
 
-	const appendLog = (kind: 'stdout' | 'stderr', stepOrd: number, n: number, text: string) => {
-		const paths = iterPathsByKey.get(iterKey(stepOrd, n));
-		if (!paths) {
-			return Effect.fail(
-				new RunRecordingError({
-					message: `cannot append ${kind}: iter ${stepOrd}/${n} not started`,
+		const requireStep = (ord: number, op: string): Effect.Effect<StepEntry, RunRecordingError> =>
+			Ref.get(stepEntriesRef).pipe(
+				Effect.flatMap((entries) => {
+					const entry = entries.get(ord);
+					return entry === undefined
+						? Effect.fail(
+								new RunRecordingError({
+									message: `cannot ${op}: step ${ord} not started`,
+								}),
+							)
+						: Effect.succeed(entry);
 				}),
 			);
-		}
-		const file = kind === 'stdout' ? paths.stdoutPath : paths.stderrPath;
-		return fs
-			.writeFileString(file, text, { flag: 'a' })
-			.pipe(Effect.mapError(toRecordingError(`failed to append ${kind}`, file)));
-	};
 
-	return {
-		runId,
-		runDir,
+		const replaceStep = (entry: StepEntry): Effect.Effect<void> =>
+			Ref.update(stepEntriesRef, (entries) => new Map(entries).set(entry.record.ord, entry));
 
-		recordRunStart: (args) =>
-			Effect.gen(function* () {
-				yield* writeFile(path.join(runDir, 'prd.md'), args.prdContent);
-				const startedAt = yield* Clock.currentTimeMillis;
-				const record: RunRecord = {
-					id: runId,
-					pipeline: args.pipeline,
-					...(args.defaultHarness === undefined ? {} : { defaultHarness: args.defaultHarness }),
-					cwd: args.cwd,
-					prdSource: args.prdSource,
-					...(args.factoryFile === undefined ? {} : { factoryFile: args.factoryFile }),
-					startedAt,
-					status: 'running',
-				};
-				runRecord = record;
-				yield* writeRun(runPath, record);
-			}),
+		const appendLog = (kind: 'stdout' | 'stderr', stepOrd: number, n: number, text: string) =>
+			Ref.get(iterPathsRef).pipe(
+				Effect.flatMap((map) => {
+					const paths = map.get(iterKey(stepOrd, n));
+					if (!paths) {
+						return Effect.fail(
+							new RunRecordingError({
+								message: `cannot append ${kind}: iter ${stepOrd}/${n} not started`,
+							}),
+						);
+					}
+					const file = kind === 'stdout' ? paths.stdoutPath : paths.stderrPath;
+					return fs
+						.writeFileString(file, text, { flag: 'a' })
+						.pipe(Effect.mapError(toRecordingError(`failed to append ${kind}`, file)));
+				}),
+			);
 
-		recordRunResume: (args) =>
-			Effect.gen(function* () {
-				const current = yield* requireRun();
-				const next: RunRecord = {
-					id: current.id,
-					pipeline: current.pipeline,
-					...(current.defaultHarness === undefined
-						? {}
-						: { defaultHarness: current.defaultHarness }),
-					cwd: current.cwd,
-					prdSource: current.prdSource,
-					...(current.factoryFile === undefined ? {} : { factoryFile: current.factoryFile }),
-					startedAt: current.startedAt,
-					status: 'running',
-				};
-				runRecord = next;
-				yield* writeRun(runPath, next);
-				yield* Effect.logDebug(`run resumed from step ord ${args.fromStepOrd}`);
-				return next;
-			}),
+		return {
+			runId,
+			runDir,
 
-		recordRunEnd: (args) =>
-			Effect.gen(function* () {
-				const current = yield* requireRun();
-				const endedAt = yield* Clock.currentTimeMillis;
-				const updated: RunRecord = {
-					...current,
-					endedAt,
-					status: args.status,
-					...(args.errorTag === undefined ? {} : { errorTag: args.errorTag }),
-					...(args.errorMessage === undefined ? {} : { errorMessage: args.errorMessage }),
-				};
-				runRecord = updated;
-				yield* writeRun(runPath, updated);
-			}),
-
-		recordStepStart: (args) =>
-			Effect.gen(function* () {
-				const dir = path.join(runDir, 'steps', `${pad(args.ord, 2)}-${args.stepId}`);
-				yield* ensureDir(dir);
-				yield* writeFile(path.join(dir, 'step.md'), args.stepFileContent);
-				const startedAt = yield* Clock.currentTimeMillis;
-				const record: StepRecord = {
-					ord: args.ord,
-					stepId: args.stepId,
-					source: args.source,
-					harness: args.harness,
-					...(args.until === undefined ? {} : { until: args.until }),
-					maxIters: args.maxIters,
-					startedAt,
-					status: 'running',
-					iters: [],
-				};
-				const entry: StepEntry = { dir, path: path.join(dir, 'step.json'), record };
-				stepEntries.set(args.ord, entry);
-				yield* persistStep(entry);
-			}),
-
-		recordStepEnd: (args) =>
-			Effect.gen(function* () {
-				const entry = yield* requireStep(args.ord, 'end step');
-				const endedAt = yield* Clock.currentTimeMillis;
-				entry.record = { ...entry.record, endedAt, status: args.status };
-				yield* persistStep(entry);
-			}),
-
-		recordIterStart: (args) =>
-			Effect.gen(function* () {
-				const entry = yield* requireStep(args.stepOrd, `start iter ${args.stepOrd}/${args.n}`);
-				const iterDir = path.join(entry.dir, 'iters', pad(args.n, 3));
-				yield* ensureDir(iterDir);
-				const paths: IterPaths = {
-					iterDir,
-					stdoutPath: path.join(iterDir, 'stdout.log'),
-					stderrPath: path.join(iterDir, 'stderr.log'),
-					promptPath: path.join(iterDir, 'prompt.md'),
-					eventsPath: path.join(iterDir, 'events.jsonl'),
-				};
-				iterPathsByKey.set(iterKey(args.stepOrd, args.n), paths);
-				yield* writeFile(paths.promptPath, args.prompt);
-				const startedAt = yield* Clock.currentTimeMillis;
-				const iter: IterRecord = { n: args.n, startedAt };
-				entry.record = { ...entry.record, iters: [...entry.record.iters, iter] };
-				yield* persistStep(entry);
-				return paths;
-			}),
-
-		recordIterEnd: (args) =>
-			Effect.gen(function* () {
-				const entry = yield* requireStep(args.stepOrd, `end iter ${args.stepOrd}/${args.n}`);
-				const idx = entry.record.iters.findIndex((it) => it.n === args.n);
-				const existing = idx < 0 ? undefined : entry.record.iters[idx];
-				if (existing === undefined) {
-					return yield* Effect.fail(
-						new RunRecordingError({
-							message: `cannot end iter ${args.stepOrd}/${args.n}: iter not started`,
-						}),
-					);
-				}
-				const endedAt = yield* Clock.currentTimeMillis;
-				const updatedIter: IterRecord = {
-					...existing,
-					n: args.n,
-					endedAt,
-					exitCode: args.exitCode,
-					...(args.untilPassed === undefined ? {} : { untilPassed: args.untilPassed }),
-					...(args.untilOutput === undefined ? {} : { untilOutput: args.untilOutput }),
-					...(args.filesChanged === undefined ? {} : { filesChanged: args.filesChanged }),
-				};
-				const iters = entry.record.iters.map((it, i) => (i === idx ? updatedIter : it));
-				entry.record = { ...entry.record, iters };
-				yield* persistStep(entry);
-
-				const iterPaths = iterPathsByKey.get(iterKey(args.stepOrd, args.n));
-				if (iterPaths) {
-					yield* writeIter(path.join(iterPaths.iterDir, 'summary.json'), updatedIter);
-				}
-			}),
-
-		recordRoleStart: (args) =>
-			roleMutex.withPermits(1)(
+			recordRunStart: (args) =>
 				Effect.gen(function* () {
-					const entry = yield* requireStep(
-						args.stepOrd,
-						`start role ${args.stepOrd}/${args.roleId}`,
-					);
-					const roleDir = path.join(entry.dir, 'roles', args.roleId);
-					yield* ensureDir(roleDir);
-					const findingsPath = path.join(roleDir, 'findings.json');
+					yield* writeFile(path.join(runDir, 'prd.md'), args.prdContent);
 					const startedAt = yield* Clock.currentTimeMillis;
-					const role: RoleRecord = {
-						name: args.roleId,
-						harness: args.harness,
+					const record: RunRecord = {
+						id: runId,
+						pipeline: args.pipeline,
+						...(args.defaultHarness === undefined ? {} : { defaultHarness: args.defaultHarness }),
+						cwd: args.cwd,
+						prdSource: args.prdSource,
+						...(args.factoryFile === undefined ? {} : { factoryFile: args.factoryFile }),
 						startedAt,
 						status: 'running',
-						findings: 0,
 					};
-					const existing = entry.record.roles ?? [];
-					const roles = existing.concat(role);
-					entry.record = { ...entry.record, roles };
-					yield* persistStep(entry);
-					return { roleDir, findingsPath } satisfies RolePaths;
+					yield* Ref.set(runRecordRef, record);
+					yield* writeRun(runPath, record);
 				}),
-			),
 
-		recordRoleEnd: (args) =>
-			roleMutex.withPermits(1)(
+			recordRunResume: (args) =>
 				Effect.gen(function* () {
-					const entry = yield* requireStep(args.stepOrd, `end role ${args.stepOrd}/${args.roleId}`);
-					const existing = entry.record.roles ?? [];
-					const next = existing.slice();
-					let idx = -1;
-					for (let i = 0; i < next.length; i++) {
-						if (next[i]?.name === args.roleId) {
-							idx = i;
-							break;
-						}
-					}
-					const current = idx < 0 ? undefined : next[idx];
-					if (current === undefined) {
+					const current = yield* requireRun();
+					const next: RunRecord = {
+						id: current.id,
+						pipeline: current.pipeline,
+						...(current.defaultHarness === undefined
+							? {}
+							: { defaultHarness: current.defaultHarness }),
+						cwd: current.cwd,
+						prdSource: current.prdSource,
+						...(current.factoryFile === undefined ? {} : { factoryFile: current.factoryFile }),
+						startedAt: current.startedAt,
+						status: 'running',
+					};
+					yield* Ref.set(runRecordRef, next);
+					yield* writeRun(runPath, next);
+					yield* Effect.logDebug(`run resumed from step ord ${args.fromStepOrd}`);
+					return next;
+				}),
+
+			recordRunEnd: (args) =>
+				Effect.gen(function* () {
+					const current = yield* requireRun();
+					const endedAt = yield* Clock.currentTimeMillis;
+					const updated: RunRecord = {
+						...current,
+						endedAt,
+						status: args.status,
+						...(args.errorTag === undefined ? {} : { errorTag: args.errorTag }),
+						...(args.errorMessage === undefined ? {} : { errorMessage: args.errorMessage }),
+					};
+					yield* Ref.set(runRecordRef, updated);
+					yield* writeRun(runPath, updated);
+				}),
+
+			recordStepStart: (args) =>
+				Effect.gen(function* () {
+					const dir = path.join(runDir, 'steps', `${pad(args.ord, 2)}-${args.stepId}`);
+					yield* ensureDir(dir);
+					yield* writeFile(path.join(dir, 'step.md'), args.stepFileContent);
+					const startedAt = yield* Clock.currentTimeMillis;
+					const record: StepRecord = {
+						ord: args.ord,
+						stepId: args.stepId,
+						source: args.source,
+						harness: args.harness,
+						...(args.until === undefined ? {} : { until: args.until }),
+						maxIters: args.maxIters,
+						startedAt,
+						status: 'running',
+						iters: [],
+					};
+					const entry: StepEntry = { dir, path: path.join(dir, 'step.json'), record };
+					yield* replaceStep(entry);
+					yield* persistStep(entry);
+				}),
+
+			recordStepEnd: (args) =>
+				Effect.gen(function* () {
+					const entry = yield* requireStep(args.ord, 'end step');
+					const endedAt = yield* Clock.currentTimeMillis;
+					const next: StepEntry = {
+						...entry,
+						record: { ...entry.record, endedAt, status: args.status },
+					};
+					yield* replaceStep(next);
+					yield* persistStep(next);
+				}),
+
+			recordIterStart: (args) =>
+				Effect.gen(function* () {
+					const entry = yield* requireStep(args.stepOrd, `start iter ${args.stepOrd}/${args.n}`);
+					const iterDir = path.join(entry.dir, 'iters', pad(args.n, 3));
+					yield* ensureDir(iterDir);
+					const paths: IterPaths = {
+						iterDir,
+						stdoutPath: path.join(iterDir, 'stdout.log'),
+						stderrPath: path.join(iterDir, 'stderr.log'),
+						promptPath: path.join(iterDir, 'prompt.md'),
+						eventsPath: path.join(iterDir, 'events.jsonl'),
+					};
+					yield* Ref.update(iterPathsRef, (m) =>
+						new Map(m).set(iterKey(args.stepOrd, args.n), paths),
+					);
+					yield* writeFile(paths.promptPath, args.prompt);
+					const startedAt = yield* Clock.currentTimeMillis;
+					const iter: IterRecord = { n: args.n, startedAt };
+					const next: StepEntry = {
+						...entry,
+						record: { ...entry.record, iters: [...entry.record.iters, iter] },
+					};
+					yield* replaceStep(next);
+					yield* persistStep(next);
+					return paths;
+				}),
+
+			recordIterEnd: (args) =>
+				Effect.gen(function* () {
+					const entry = yield* requireStep(args.stepOrd, `end iter ${args.stepOrd}/${args.n}`);
+					const idx = entry.record.iters.findIndex((it) => it.n === args.n);
+					const existing = idx < 0 ? undefined : entry.record.iters[idx];
+					if (existing === undefined) {
 						return yield* Effect.fail(
 							new RunRecordingError({
-								message: `cannot end role ${args.stepOrd}/${args.roleId}: role not started`,
+								message: `cannot end iter ${args.stepOrd}/${args.n}: iter not started`,
 							}),
 						);
 					}
 					const endedAt = yield* Clock.currentTimeMillis;
-					next[idx] = {
-						name: current.name,
-						harness: current.harness,
-						startedAt: current.startedAt,
+					const updatedIter: IterRecord = {
+						...existing,
+						n: args.n,
 						endedAt,
-						status: args.status,
-						findings: args.findings,
-						...(args.errorTag === undefined ? {} : { errorTag: args.errorTag }),
+						exitCode: args.exitCode,
+						...(args.untilPassed === undefined ? {} : { untilPassed: args.untilPassed }),
+						...(args.untilOutput === undefined ? {} : { untilOutput: args.untilOutput }),
+						...(args.filesChanged === undefined ? {} : { filesChanged: args.filesChanged }),
 					};
-					entry.record = { ...entry.record, roles: next };
-					yield* persistStep(entry);
+					const iters = entry.record.iters.map((it, i) => (i === idx ? updatedIter : it));
+					const next: StepEntry = { ...entry, record: { ...entry.record, iters } };
+					yield* replaceStep(next);
+					yield* persistStep(next);
+
+					const iterPathsMap = yield* Ref.get(iterPathsRef);
+					const iterPaths = iterPathsMap.get(iterKey(args.stepOrd, args.n));
+					if (iterPaths) {
+						yield* writeIter(path.join(iterPaths.iterDir, 'summary.json'), updatedIter);
+					}
 				}),
-			),
 
-		appendEvent: (event) => appendLine(eventsPath, JSON.stringify(event)),
-
-		appendStdout: (stepOrd, n, text) => appendLog('stdout', stepOrd, n, text),
-
-		appendStderr: (stepOrd, n, text) => appendLog('stderr', stepOrd, n, text),
-
-		appendIterEvent: (stepOrd, n, event) => {
-			const paths = iterPathsByKey.get(iterKey(stepOrd, n));
-			if (!paths) {
-				return Effect.fail(
-					new RunRecordingError({
-						message: `cannot append iter event: iter ${stepOrd}/${n} not started`,
+			recordRoleStart: (args) =>
+				roleMutex.withPermits(1)(
+					Effect.gen(function* () {
+						const entry = yield* requireStep(
+							args.stepOrd,
+							`start role ${args.stepOrd}/${args.roleId}`,
+						);
+						const roleDir = path.join(entry.dir, 'roles', args.roleId);
+						yield* ensureDir(roleDir);
+						const findingsPath = path.join(roleDir, 'findings.json');
+						const startedAt = yield* Clock.currentTimeMillis;
+						const role: RoleRecord = {
+							name: args.roleId,
+							harness: args.harness,
+							startedAt,
+							status: 'running',
+							findings: 0,
+						};
+						const existing = entry.record.roles ?? [];
+						const roles = existing.concat(role);
+						const next: StepEntry = { ...entry, record: { ...entry.record, roles } };
+						yield* replaceStep(next);
+						yield* persistStep(next);
+						return { roleDir, findingsPath } satisfies RolePaths;
 					}),
-				);
-			}
-			return appendLine(paths.eventsPath, JSON.stringify(event));
-		},
-	};
-};
+				),
+
+			recordRoleEnd: (args) =>
+				roleMutex.withPermits(1)(
+					Effect.gen(function* () {
+						const entry = yield* requireStep(
+							args.stepOrd,
+							`end role ${args.stepOrd}/${args.roleId}`,
+						);
+						const existing = entry.record.roles ?? [];
+						const nextRoles = existing.slice();
+						let idx = -1;
+						for (let i = 0; i < nextRoles.length; i++) {
+							if (nextRoles[i]?.name === args.roleId) {
+								idx = i;
+								break;
+							}
+						}
+						const current = idx < 0 ? undefined : nextRoles[idx];
+						if (current === undefined) {
+							return yield* Effect.fail(
+								new RunRecordingError({
+									message: `cannot end role ${args.stepOrd}/${args.roleId}: role not started`,
+								}),
+							);
+						}
+						const endedAt = yield* Clock.currentTimeMillis;
+						nextRoles[idx] = {
+							name: current.name,
+							harness: current.harness,
+							startedAt: current.startedAt,
+							endedAt,
+							status: args.status,
+							findings: args.findings,
+							...(args.errorTag === undefined ? {} : { errorTag: args.errorTag }),
+						};
+						const next: StepEntry = {
+							...entry,
+							record: { ...entry.record, roles: nextRoles },
+						};
+						yield* replaceStep(next);
+						yield* persistStep(next);
+					}),
+				),
+
+			appendEvent: (event) => appendLine(eventsPath, JSON.stringify(event)),
+
+			appendStdout: (stepOrd, n, text) => appendLog('stdout', stepOrd, n, text),
+
+			appendStderr: (stepOrd, n, text) => appendLog('stderr', stepOrd, n, text),
+
+			appendIterEvent: (stepOrd, n, event) =>
+				Ref.get(iterPathsRef).pipe(
+					Effect.flatMap((map) => {
+						const paths = map.get(iterKey(stepOrd, n));
+						if (!paths) {
+							return Effect.fail(
+								new RunRecordingError({
+									message: `cannot append iter event: iter ${stepOrd}/${n} not started`,
+								}),
+							);
+						}
+						return appendLine(paths.eventsPath, JSON.stringify(event));
+					}),
+				),
+		};
+	});
 
 const updateLatestSymlink = (runsDir: string, runId: RunId, fs: FileSystem.FileSystem) => {
 	if (process.platform === 'win32') return Effect.void;
@@ -480,7 +520,7 @@ const buildWorkspace = (runId: RunId, runDir: string) =>
 		yield* fs
 			.makeDirectory(runDir, { recursive: true })
 			.pipe(Effect.mapError(toRecordingError(`failed to create ${runDir}`, runDir)));
-		return makeService({ runId, runDir, fs, path });
+		return yield* makeService({ runId, runDir, fs, path });
 	});
 
 const hydrateStepEntries = (runDir: string) =>
@@ -520,7 +560,7 @@ const buildResumedWorkspace = (runId: RunId, runDir: string) =>
 		const runJsonPath = path.join(runDir, 'run.json');
 		const runRecord = yield* readRun(runJsonPath);
 		const stepEntries = yield* hydrateStepEntries(runDir);
-		return makeService({
+		return yield* makeService({
 			runId,
 			runDir,
 			fs,

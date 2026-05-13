@@ -8,7 +8,7 @@ import { ConsoleDisplay } from './services/Display.ts';
 import { callbackEventEmitter } from './services/EventEmitter.ts';
 import { harnessRegistryLayer } from './services/HarnessRegistry.ts';
 import { LiveRunWorkspace } from './services/RunWorkspace.ts';
-import { FileStepLoader } from './services/StepLoader.ts';
+import { StepLoader } from './services/StepLoader.ts';
 import { DefaultUntilEvaluator } from './services/UntilEvaluator.ts';
 import type {
 	Factory,
@@ -49,7 +49,7 @@ const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RuntimeOpts, ctx: Runt
 			onError: runOpts.onError,
 		}),
 		harnessRegistryLayer(opts.harnesses ?? []),
-		FileStepLoader.layer,
+		StepLoader.Default,
 		DefaultUntilEvaluator.layer,
 		workspaceLayer,
 		otelEnabled ? OtelLayer : NoOtelLayer,

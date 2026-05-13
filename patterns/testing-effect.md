@@ -144,7 +144,7 @@ it.effect('reads from in-memory loader', () =>
     const loader = yield* StepLoader;
     const loaded = yield* loader.load('./plan.md', '/');
     strictEqual(loaded.frontmatter.name, 'plan');
-  }).pipe(Effect.provide(InMemoryStepLoader.layer(map))),
+  }).pipe(Effect.provide(StepLoader.inMemory(map))),
 );
 ```
 
@@ -171,7 +171,7 @@ import { FileSystem } from '@effect/platform';
 import { NodeContext } from '@effect/platform-node';
 import { Effect, Layer } from 'effect';
 
-describe('FileStepLoader', () => {
+describe('StepLoader.Default', () => {
   it.scoped('reads markdown + frontmatter from disk', () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -181,7 +181,7 @@ describe('FileStepLoader', () => {
       const loader = yield* StepLoader;
       const loaded = yield* loader.load('plan.md', dir);
       strictEqual(loaded.frontmatter.name, 'plan');
-    }).pipe(Effect.provide(FileStepLoader.layer.pipe(Layer.provide(NodeContext.layer)))),
+    }).pipe(Effect.provide(StepLoader.Default.pipe(Layer.provide(NodeContext.layer)))),
   );
 });
 ```
@@ -420,7 +420,7 @@ instead of the real ones:
 | `ConsoleDisplay`                      | `SilentDisplay`                                                               | Captures entries to a `Ref`.        |
 | `callbackEventEmitter`                | `recordingEventEmitter`                                                       | Captures events to a `Ref`.         |
 | `harnessRegistryLayer([realHarness])` | `harnessRegistryLayer([scriptedHarness('claude-code', [{ stdout: '...' }])])` | Cycles through canned outputs.      |
-| `FileStepLoader`                      | `InMemoryStepLoader.layer(map)`                                               | Reads from a `Map<string, string>`. |
+| `StepLoader.Default`                  | `StepLoader.inMemory(map)`                                                    | Reads from a `Map<string, string>`. |
 | `DefaultUntilEvaluator`               | `scriptedUntilEvaluator.layer([true, false])`                                 | Cycles through canned verdicts.     |
 
 Every service has a real impl + at least one test impl, both exposing a
@@ -482,14 +482,14 @@ const buildLayer = (
     SilentDisplay.layer(displayRef),
     recordingEventEmitter.layer(eventsRef),
     harnessRegistryLayer([scriptedHarness('claude-code', [{ stdout: 'iter-1\n' }])]),
-    InMemoryStepLoader.layer(new Map(steps)),
+    StepLoader.inMemory(new Map(steps)),
     scriptedUntilEvaluator.layer(verdicts),
     InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
   ).pipe(Layer.provideMerge(NodeContext.layer));
 ```
 
 `Layer.provideMerge(NodeContext.layer)` provides `FileSystem`, `Path`, and
-`CommandExecutor` — even tests that use `InMemoryStepLoader` need it because
+`CommandExecutor` — even tests that use `StepLoader.inMemory` need it because
 the orchestrator calls `Path.Path` for resolution.
 
 ## When to fall back to plain `vitest`
@@ -504,7 +504,7 @@ Otherwise: `it.effect` (or `it.scoped` if scoped resources are involved).
 
 ## Don't
 
-- **Don't import the real `FileStepLoader` or `DefaultUntilEvaluator` in a
+- **Don't import the real `StepLoader.Default` or `DefaultUntilEvaluator` in a
   test.** That's the production layer; you lose test control. Use the
   in-memory / scripted variants.
 - **Don't use `Effect.runSync`, `Effect.runPromise`, or `Effect.runPromiseExit`

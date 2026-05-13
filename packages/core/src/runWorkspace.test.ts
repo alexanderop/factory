@@ -19,7 +19,7 @@ import { LiveRunWorkspace, RunWorkspace } from './services/RunWorkspace.ts';
 import {
 	type DisplayEntry,
 	harnessRegistryLayer,
-	InMemoryStepLoader,
+	StepLoader,
 	makeIterRecord,
 	makeRunId,
 	makeRunRecord,
@@ -58,7 +58,7 @@ describe('runWorkspace integration (file-only manifests)', () => {
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
 				harnessRegistryLayer([fakeHarness]),
-				InMemoryStepLoader.layer(stepsMap),
+				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
 				LiveRunWorkspace.layer({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));
@@ -151,7 +151,7 @@ describe('runWorkspace integration (file-only manifests)', () => {
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
 				harnessRegistryLayer([harness]),
-				InMemoryStepLoader.layer(stepsMap),
+				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([false, true]),
 				LiveRunWorkspace.layer({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));
@@ -304,7 +304,7 @@ describe('LiveRunWorkspace.resumed', () => {
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
 				harnessRegistryLayer([phase1Harness]),
-				InMemoryStepLoader.layer(stepsMap),
+				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true, false, false]),
 				LiveRunWorkspace.layer({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));
@@ -348,7 +348,7 @@ describe('LiveRunWorkspace.resumed', () => {
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
 				harnessRegistryLayer([phase2Harness]),
-				InMemoryStepLoader.layer(stepsMap),
+				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
 				LiveRunWorkspace.resumed({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));
@@ -390,7 +390,7 @@ describe('LiveRunWorkspace.resumed', () => {
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
 				harnessRegistryLayer([harness]),
-				InMemoryStepLoader.layer(stepsMap),
+				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
 				LiveRunWorkspace.resumed({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));

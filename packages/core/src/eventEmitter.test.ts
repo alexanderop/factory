@@ -9,7 +9,7 @@ import { SilentDisplay } from './services/Display.ts';
 import { callbackEventEmitter } from './services/EventEmitter.ts';
 import { harnessRegistryLayer } from './services/HarnessRegistry.ts';
 import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
-import { InMemoryStepLoader } from './services/StepLoader.ts';
+import { StepLoader } from './services/StepLoader.ts';
 import { scriptedUntilEvaluator } from './services/UntilEvaluator.ts';
 import { assertExitFailedWith, cycledHarness, type DisplayEntry } from './testing/index.ts';
 import type { FactoryEvent } from './types.ts';
@@ -29,7 +29,7 @@ const buildLayer = (options: BuildLayerOptions) =>
 		SilentDisplay.layer(Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([])),
 		callbackEventEmitter.layer({ onStep: options.onStep, onError: options.onError }),
 		harnessRegistryLayer([cycledHarness('claude-code', [{ stdout: 'iter-1\n' }])]),
-		InMemoryStepLoader.layer(options.stepFiles),
+		StepLoader.inMemory(options.stepFiles),
 		scriptedUntilEvaluator.layer(options.verdicts),
 		InMemoryRunWorkspace.layer({ runId: RunId.make('test-run') }),
 	).pipe(Layer.provideMerge(NodeContext.layer));

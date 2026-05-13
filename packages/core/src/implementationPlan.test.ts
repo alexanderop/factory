@@ -10,7 +10,7 @@ import {
 	cycledHarness,
 	type DisplayEntry,
 	harnessRegistryLayer,
-	InMemoryStepLoader,
+	StepLoader,
 	makeRunId,
 	noopEventEmitter,
 	scriptedHarness,
@@ -38,7 +38,7 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
 				harnessRegistryLayer([harness]),
-				InMemoryStepLoader.layer(stepsMap),
+				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
 				LiveRunWorkspace.layer({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));
@@ -97,7 +97,7 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
 				harnessRegistryLayer([harness]),
-				InMemoryStepLoader.layer(stepsMap),
+				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true, true]),
 				LiveRunWorkspace.layer({ runId, cwd: tmp }),
 			).pipe(Layer.provideMerge(NodeContext.layer));

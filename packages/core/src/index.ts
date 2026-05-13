@@ -73,12 +73,7 @@ export {
 	type RunRecord,
 	type StepRecord,
 } from './services/runManifest.ts';
-export {
-	FileStepLoader,
-	InMemoryStepLoader,
-	StepLoader,
-	type StepLoaderService,
-} from './services/StepLoader.ts';
+export { StepLoader, type StepLoaderService } from './services/StepLoader.ts';
 export {
 	DefaultUntilEvaluator,
 	scriptedUntilEvaluator,

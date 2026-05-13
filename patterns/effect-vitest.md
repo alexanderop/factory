@@ -118,7 +118,7 @@ it.scoped('writes a step file under a fresh tmp dir', () =>
     const loader = yield* StepLoader;
     const loaded = yield* loader.load('plan.md', dir);
     strictEqual(loaded.frontmatter.name, 'plan');
-  }).pipe(Effect.provide(FileStepLoader.layer.pipe(Layer.provide(NodeContext.layer)))),
+  }).pipe(Effect.provide(StepLoader.Default.pipe(Layer.provide(NodeContext.layer)))),
 );
 ```
 

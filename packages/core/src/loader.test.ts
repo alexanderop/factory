@@ -4,12 +4,12 @@ import { describe, it } from '@effect/vitest';
 import { assertInstanceOf, assertTrue, strictEqual } from '@effect/vitest/utils';
 import { Cause, Effect, Exit, Layer } from 'effect';
 import { StepLoadError } from './errors.ts';
-import { FileStepLoader, InMemoryStepLoader, StepLoader } from './services/StepLoader.ts';
+import { StepLoader } from './services/StepLoader.ts';
 
-const FileLoaderLayer = FileStepLoader.layer.pipe(Layer.provideMerge(NodeContext.layer));
+const FileLoaderLayer = StepLoader.Default.pipe(Layer.provideMerge(NodeContext.layer));
 
 describe('StepLoader', () => {
-	describe('FileStepLoader', () => {
+	describe('StepLoader.Default (FileSystem)', () => {
 		it.scoped('reads markdown + frontmatter from disk', () =>
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
@@ -44,7 +44,7 @@ describe('StepLoader', () => {
 		);
 	});
 
-	describe('InMemoryStepLoader', () => {
+	describe('StepLoader.inMemory', () => {
 		it.effect('returns parsed steps from the supplied map', () =>
 			Effect.gen(function* () {
 				const loader = yield* StepLoader;
@@ -53,9 +53,7 @@ describe('StepLoader', () => {
 				strictEqual(loaded.prompt, 'Plan body.');
 			}).pipe(
 				Effect.provide(
-					InMemoryStepLoader.layer(
-						new Map([['./steps/plan.md', '---\nname: plan\n---\nPlan body.']]),
-					),
+					StepLoader.inMemory(new Map([['./steps/plan.md', '---\nname: plan\n---\nPlan body.']])),
 				),
 			),
 		);
@@ -67,7 +65,7 @@ describe('StepLoader', () => {
 				strictEqual(loaded.frontmatter.permissions, 'read-only');
 			}).pipe(
 				Effect.provide(
-					InMemoryStepLoader.layer(
+					StepLoader.inMemory(
 						new Map([
 							['./steps/plan.md', '---\nname: plan\npermissions: read-only\n---\nPlan body.'],
 						]),
@@ -84,7 +82,7 @@ describe('StepLoader', () => {
 				strictEqual(loaded.frontmatter.requires?.prompt?.image, true);
 			}).pipe(
 				Effect.provide(
-					InMemoryStepLoader.layer(
+					StepLoader.inMemory(
 						new Map([
 							[
 								'./steps/plan.md',
@@ -106,7 +104,7 @@ describe('StepLoader', () => {
 				assertInstanceOf(failure.value, StepLoadError);
 			}).pipe(
 				Effect.provide(
-					InMemoryStepLoader.layer(
+					StepLoader.inMemory(
 						new Map([
 							[
 								'./steps/plan.md',
@@ -128,7 +126,7 @@ describe('StepLoader', () => {
 				assertInstanceOf(failure.value, StepLoadError);
 			}).pipe(
 				Effect.provide(
-					InMemoryStepLoader.layer(
+					StepLoader.inMemory(
 						new Map([['./steps/plan.md', '---\nname: plan\npermissions: yolo\n---\nPlan body.']]),
 					),
 				),
@@ -143,7 +141,7 @@ describe('StepLoader', () => {
 				const failure = Cause.failureOption(exit.cause);
 				assertTrue(failure._tag === 'Some');
 				assertInstanceOf(failure.value, StepLoadError);
-			}).pipe(Effect.provide(InMemoryStepLoader.layer(new Map()))),
+			}).pipe(Effect.provide(StepLoader.inMemory(new Map()))),
 		);
 	});
 });

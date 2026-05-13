@@ -26,7 +26,7 @@ import { noopEventEmitter, recordingEventEmitter } from '../services/EventEmitte
 import { harnessRegistryLayer } from '../services/HarnessRegistry.ts';
 import type { IterRecord, RoleRecord, RunRecord, StepRecord } from '../services/runManifest.ts';
 import { InMemoryRunWorkspace } from '../services/RunWorkspace.ts';
-import { InMemoryStepLoader } from '../services/StepLoader.ts';
+import { StepLoader } from '../services/StepLoader.ts';
 import { scriptedUntilEvaluator } from '../services/UntilEvaluator.ts';
 import type { ExecOpts, FactoryEvent, Harness, PermissionMode, StepEntry } from '../types.ts';
 import {
@@ -375,7 +375,7 @@ export const makeTestLayer = (options: MakeTestLayerOptions = {}) => {
 		SilentDisplay.layer(displayRef),
 		eventsLayer,
 		harnessRegistryLayer(harnesses),
-		InMemoryStepLoader.layer(toMap(options.stepFiles)),
+		StepLoader.inMemory(toMap(options.stepFiles)),
 		scriptedUntilEvaluator.layer(options.verdicts ?? [true]),
 		workspaceLayer,
 	).pipe(Layer.provideMerge(NodeContext.layer));
