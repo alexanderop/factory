@@ -8,6 +8,7 @@ import { runFactoryEffect } from './orchestrator.ts';
 import { SilentDisplay } from './services/Display.ts';
 import { callbackEventEmitter } from './services/EventEmitter.ts';
 import { harnessRegistryLayer } from './services/HarnessRegistry.ts';
+import { noopHookRunner, noopHookTransport } from './services/HookRunner.ts';
 import { InMemoryRunWorkspace } from './services/RunWorkspace.ts';
 import { StepLoader } from './services/StepLoader.ts';
 import { scriptedUntilEvaluator } from './services/UntilEvaluator.ts';
@@ -28,6 +29,8 @@ const buildLayer = (options: BuildLayerOptions) =>
 	Layer.mergeAll(
 		SilentDisplay.layer(Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([])),
 		callbackEventEmitter.layer({ onStep: options.onStep, onError: options.onError }),
+		noopHookRunner.layer,
+		noopHookTransport.layer,
 		harnessRegistryLayer([cycledHarness('claude-code', [{ stdout: 'iter-1\n' }])]),
 		StepLoader.inMemory(options.stepFiles),
 		scriptedUntilEvaluator.layer(options.verdicts),

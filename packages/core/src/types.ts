@@ -1,5 +1,5 @@
-import type { CommandExecutor } from '@effect/platform';
-import { Schema, type Effect, type Stream } from 'effect';
+import type { CommandExecutor, FileSystem } from '@effect/platform';
+import { Schema, type Effect, type Layer, type Stream } from 'effect';
 import type { HarnessCapabilities } from './capabilities.ts';
 import { StepRequirements } from './capabilities.ts';
 import type {
@@ -11,6 +11,7 @@ import type {
 import { HarnessName, StepId } from './ids.ts';
 import type { PipelineName, RunId } from './ids.ts';
 import { PermissionMode } from './permissionMode.ts';
+import type { HookRunner, HookTransport } from './services/HookRunner.ts';
 
 export { PermissionMode };
 
@@ -20,6 +21,9 @@ export interface ExecOpts {
 	readonly env?: Readonly<Record<string, string>>;
 	readonly idleTimeoutMs?: number;
 	readonly permissions: PermissionMode;
+	/** Extra CLI args appended after the harness's own args — used to point the
+	 *  harness at a hook-config file (e.g. `--settings <path>`). */
+	readonly extraArgs?: ReadonlyArray<string>;
 }
 
 export interface ExecResult {
@@ -187,6 +191,11 @@ export interface FactoryOptions<Names extends string = string> {
 	readonly harness?: Names;
 	readonly harnesses?: ReadonlyArray<Harness<Names>>;
 	readonly permissions?: PermissionMode;
+	/** Live hook layer (provides `HookRunner` + `HookTransport`). Built by
+	 *  `@factory/hooks` (`hooksLayer({ config, adapters })`) and injected here to
+	 *  avoid a core→hooks dependency. Absent → no-op hooks. May require
+	 *  `FileSystem` (the live layer allocates a run-scoped config dir). */
+	readonly hooks?: Layer.Layer<HookRunner | HookTransport, never, FileSystem.FileSystem>;
 }
 
 export interface RunOptions {

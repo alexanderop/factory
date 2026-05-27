@@ -32,3 +32,5 @@ export const codex = createSubprocessHarness({
 	},
 	buildArgs: codexBuildArgs,
 });
+
+export { codexHooksAdapter } from './hooksAdapter.ts';

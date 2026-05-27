@@ -13,6 +13,8 @@ import {
 	StepLoader,
 	makeRunId,
 	noopEventEmitter,
+	noopHookRunner,
+	noopHookTransport,
 	scriptedHarness,
 	scriptedUntilEvaluator,
 	SilentDisplay,
@@ -37,6 +39,8 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 			const layer = Layer.mergeAll(
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
+				noopHookRunner.layer,
+				noopHookTransport.layer,
 				harnessRegistryLayer([harness]),
 				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
@@ -96,6 +100,8 @@ describe('IMPLEMENTATION_PLAN.md slice ledger', () => {
 			const layer = Layer.mergeAll(
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
+				noopHookRunner.layer,
+				noopHookTransport.layer,
 				harnessRegistryLayer([harness]),
 				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true, true]),

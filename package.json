@@ -35,7 +35,10 @@
 	},
 	"dependencies": {
 		"@factory/core": "workspace:*",
-		"@factory/harness-claude-code": "workspace:*"
+		"@factory/harness-claude-code": "workspace:*",
+		"@factory/harness-codex": "workspace:*",
+		"@factory/harness-copilot": "workspace:*",
+		"@factory/hooks": "workspace:*"
 	},
 	"devDependencies": {
 		"@effect/vitest": "^0.29.0",

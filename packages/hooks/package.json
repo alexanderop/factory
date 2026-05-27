@@ -1,0 +1,30 @@
+{
+	"name": "@factory/hooks",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./testing": "./src/testing/index.ts"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run",
+		"test:unit": "vitest run --project unit --passWithNoTests",
+		"test:integration": "vitest run --project integration",
+		"test:e2e": "vitest run --project e2e --passWithNoTests"
+	},
+	"dependencies": {
+		"@effect/platform": "^0.96.1",
+		"@effect/platform-node": "^0.106.0",
+		"@factory/core": "workspace:*",
+		"effect": "^3.21.2"
+	},
+	"devDependencies": {
+		"@effect/vitest": "^0.29.0",
+		"@types/node": "^22.10.10",
+		"typescript": "^5.9.2",
+		"vitest": "^4.1.5"
+	}
+}

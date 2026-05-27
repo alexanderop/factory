@@ -30,3 +30,5 @@ export const copilot = createSubprocessHarness({
 	},
 	buildArgs: copilotBuildArgs,
 });
+
+export { copilotHooksAdapter } from './hooksAdapter.ts';

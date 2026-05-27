@@ -24,6 +24,12 @@ import type { RoleFinding } from '../review/finding.ts';
 import { type DisplayEntry, SilentDisplay } from '../services/Display.ts';
 import { noopEventEmitter, recordingEventEmitter } from '../services/EventEmitter.ts';
 import { harnessRegistryLayer } from '../services/HarnessRegistry.ts';
+import {
+	type HookEvent,
+	noopHookRunner,
+	noopHookTransport,
+	recordingHookRunner,
+} from '../services/HookRunner.ts';
 import type { IterRecord, RoleRecord, RunRecord, StepRecord } from '../services/runManifest.ts';
 import { InMemoryRunWorkspace } from '../services/RunWorkspace.ts';
 import { StepLoader } from '../services/StepLoader.ts';
@@ -337,6 +343,7 @@ export const makeRoleLoadError = (
 export interface MakeTestLayerOptions {
 	readonly displayRef?: Ref.Ref<ReadonlyArray<DisplayEntry>>;
 	readonly eventsRef?: Ref.Ref<ReadonlyArray<FactoryEvent>>;
+	readonly hookEventsRef?: Ref.Ref<ReadonlyArray<HookEvent>>;
 	readonly harnesses?: ReadonlyArray<Harness>;
 	readonly stepFiles?: ReadonlyMap<string, string> | Iterable<readonly [string, string]>;
 	readonly verdicts?: ReadonlyArray<boolean>;
@@ -366,6 +373,9 @@ export const makeTestLayer = (options: MakeTestLayerOptions = {}) => {
 	const eventsLayer = options.eventsRef
 		? recordingEventEmitter.layer(options.eventsRef)
 		: noopEventEmitter.layer;
+	const hookRunnerLayer = options.hookEventsRef
+		? recordingHookRunner.layer(options.hookEventsRef)
+		: noopHookRunner.layer;
 	const runId = options.runId ?? DEFAULT_RUN_ID;
 	const workspaceLayer = options.runDir
 		? InMemoryRunWorkspace.layer({ runId, runDir: options.runDir })
@@ -374,6 +384,8 @@ export const makeTestLayer = (options: MakeTestLayerOptions = {}) => {
 	return Layer.mergeAll(
 		SilentDisplay.layer(displayRef),
 		eventsLayer,
+		hookRunnerLayer,
+		noopHookTransport.layer,
 		harnessRegistryLayer(harnesses),
 		StepLoader.inMemory(toMap(options.stepFiles)),
 		scriptedUntilEvaluator.layer(options.verdicts ?? [true]),
@@ -392,20 +404,25 @@ export interface TestRig {
 	readonly layer: ReturnType<typeof makeTestLayer>;
 	readonly events: Effect.Effect<ReadonlyArray<FactoryEvent>>;
 	readonly display: Effect.Effect<ReadonlyArray<DisplayEntry>>;
+	readonly hookEvents: Effect.Effect<ReadonlyArray<HookEvent>>;
 	readonly eventsRef: Ref.Ref<ReadonlyArray<FactoryEvent>>;
 	readonly displayRef: Ref.Ref<ReadonlyArray<DisplayEntry>>;
+	readonly hookEventsRef: Ref.Ref<ReadonlyArray<HookEvent>>;
 }
 
 export const makeTestRig = (options: MakeTestLayerOptions = {}): TestRig => {
 	const displayRef = options.displayRef ?? Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
 	const eventsRef = options.eventsRef ?? Ref.unsafeMake<ReadonlyArray<FactoryEvent>>([]);
-	const layer = makeTestLayer({ ...options, displayRef, eventsRef });
+	const hookEventsRef = options.hookEventsRef ?? Ref.unsafeMake<ReadonlyArray<HookEvent>>([]);
+	const layer = makeTestLayer({ ...options, displayRef, eventsRef, hookEventsRef });
 	return {
 		layer,
 		events: Ref.get(eventsRef),
 		display: Ref.get(displayRef),
+		hookEvents: Ref.get(hookEventsRef),
 		eventsRef,
 		displayRef,
+		hookEventsRef,
 	};
 };
 

@@ -46,3 +46,4 @@ export const claudeCode = createSubprocessHarness({
 });
 
 export { parseClaudeStreamJsonLine } from './streamJson.ts';
+export { claudeHooksAdapter } from './hooksAdapter.ts';

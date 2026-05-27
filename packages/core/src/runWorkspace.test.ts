@@ -26,6 +26,8 @@ import {
 	makeStepId,
 	makeStepRecord,
 	noopEventEmitter,
+	noopHookRunner,
+	noopHookTransport,
 	scriptedHarness,
 	scriptedUntilEvaluator,
 	SilentDisplay,
@@ -57,6 +59,8 @@ describe('runWorkspace integration (file-only manifests)', () => {
 			const layer = Layer.mergeAll(
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
+				noopHookRunner.layer,
+				noopHookTransport.layer,
 				harnessRegistryLayer([fakeHarness]),
 				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
@@ -150,6 +154,8 @@ describe('runWorkspace integration (file-only manifests)', () => {
 			const layer = Layer.mergeAll(
 				SilentDisplay.layer(displayRef),
 				noopEventEmitter.layer,
+				noopHookRunner.layer,
+				noopHookTransport.layer,
 				harnessRegistryLayer([harness]),
 				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([false, true]),
@@ -303,6 +309,8 @@ describe('LiveRunWorkspace.resumed', () => {
 			const phase1Layer = Layer.mergeAll(
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
+				noopHookRunner.layer,
+				noopHookTransport.layer,
 				harnessRegistryLayer([phase1Harness]),
 				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true, false, false]),
@@ -347,6 +355,8 @@ describe('LiveRunWorkspace.resumed', () => {
 			const phase2Layer = Layer.mergeAll(
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
+				noopHookRunner.layer,
+				noopHookTransport.layer,
 				harnessRegistryLayer([phase2Harness]),
 				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),
@@ -389,6 +399,8 @@ describe('LiveRunWorkspace.resumed', () => {
 			const layer = Layer.mergeAll(
 				SilentDisplay.layer(yield* Ref.make<ReadonlyArray<DisplayEntry>>([])),
 				noopEventEmitter.layer,
+				noopHookRunner.layer,
+				noopHookTransport.layer,
 				harnessRegistryLayer([harness]),
 				StepLoader.inMemory(stepsMap),
 				scriptedUntilEvaluator.layer([true]),

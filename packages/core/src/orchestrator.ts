@@ -41,6 +41,7 @@ import {
 import { Display, type DisplayService } from './services/Display.ts';
 import { EventEmitter, type EventEmitterService } from './services/EventEmitter.ts';
 import { HarnessRegistry } from './services/HarnessRegistry.ts';
+import { type HookEvent, HookRunner, HookTransport } from './services/HookRunner.ts';
 import { buildIterPrompt } from './services/iterPrompt.ts';
 import { RunWorkspace, type RunWorkspaceService } from './services/RunWorkspace.ts';
 import { StepLoader } from './services/StepLoader.ts';
@@ -117,6 +118,7 @@ interface ToolSpanEntry {
 	readonly span: Tracer.Span;
 	readonly name: string;
 	readonly startedAt: number;
+	readonly input: unknown;
 }
 
 interface IterStreamResult {
@@ -140,7 +142,7 @@ const streamHarnessIter = ({
 }: StreamHarnessArgs): Effect.Effect<
 	IterStreamResult,
 	HarnessExecError | HarnessSpawnError | StepIdleTimeoutError | RunRecordingError,
-	CommandExecutor.CommandExecutor
+	CommandExecutor.CommandExecutor | HookRunner | HookTransport | FileSystem.FileSystem | Path.Path
 > =>
 	Effect.gen(function* () {
 		const stdoutLines: string[] = [];
@@ -155,6 +157,18 @@ const streamHarnessIter = ({
 		let bytesStdout = 0;
 		let bytesStderr = 0;
 		let resultEventCount = 0;
+		let lastAssistantMessage = '';
+
+		// Per-iter hook plumbing: the transport writes this iter's native hook
+		// config (returning env/extraArgs that point the harness at the socket)
+		// and reports which events it delivers natively. We dispatch only the
+		// complement from the stream so each user handler runs exactly once (D1);
+		// with the no-op transport `nativeEvents` is empty → dispatch everything.
+		const runner = yield* HookRunner;
+		const transport = yield* HookTransport;
+		const prep = yield* transport.prepareStep({ runId, stepId, harnessName, iter: n });
+		const dispatchHook = (event: HookEvent) =>
+			prep.nativeEvents.has(event._tag) ? Effect.void : runner.dispatch(event);
 
 		const iterSpan = yield* Effect.option(Effect.currentSpan);
 		const annotateIter = (key: string, value: unknown) => {
@@ -183,7 +197,8 @@ const streamHarnessIter = ({
 				: {};
 		const optsWithEnv: ExecOpts = {
 			...opts,
-			env: { ...opts.env, ...otelEnv },
+			env: { ...opts.env, ...otelEnv, ...prep.env },
+			extraArgs: [...(opts.extraArgs ?? []), ...(prep.extraArgs ?? [])],
 		};
 
 		const persistAndEmit = (event: FactoryEvent) =>
@@ -209,6 +224,15 @@ const streamHarnessIter = ({
 					}),
 				),
 			);
+
+		yield* dispatchHook({
+			_tag: 'sessionStart',
+			runId,
+			stepId,
+			iter: n,
+			harness: harnessName,
+			source: 'startup',
+		});
 
 		yield* annotateExitReasonOnError(
 			Stream.runForEach(harness.stream(optsWithEnv), (event) =>
@@ -236,6 +260,7 @@ const streamHarnessIter = ({
 							stdoutLines.push(event.text);
 							bytesStdout += Buffer.byteLength(event.text, 'utf8') + 1;
 							assistantMessageCount += 1;
+							lastAssistantMessage = event.text;
 							yield* workspace.appendStdout(stepOrd, n, `${event.text}\n`);
 							yield* display.harnessLine(stepId, 'stdout', event.text);
 							yield* Metric.increment(assistantMessagesTotal);
@@ -267,7 +292,12 @@ const streamHarnessIter = ({
 								},
 							});
 							const startedAt = yield* Clock.currentTimeMillis;
-							toolSpans.set(event.id, { span, name: event.name, startedAt });
+							toolSpans.set(event.id, {
+								span,
+								name: event.name,
+								startedAt,
+								input: event.input,
+							});
 							toolCalls += 1;
 							eventOnIter('tool.start', BigInt(startedAt) * 1_000_000n, {
 								'tool.id': event.id,
@@ -282,6 +312,16 @@ const streamHarnessIter = ({
 								tool: event.name,
 								inputSummary,
 								inputBytes,
+							});
+							yield* dispatchHook({
+								_tag: 'preToolUse',
+								runId,
+								stepId,
+								iter: n,
+								harness: harnessName,
+								tool: event.name,
+								input: event.input,
+								toolCallId: event.id,
 							});
 							return;
 						}
@@ -334,6 +374,32 @@ const streamHarnessIter = ({
 								outputBytes,
 								durationMs,
 							});
+							yield* dispatchHook(
+								event.ok
+									? {
+											_tag: 'postToolUse',
+											runId,
+											stepId,
+											iter: n,
+											harness: harnessName,
+											tool: entry.name,
+											input: entry.input,
+											output: event.output,
+											toolCallId: event.id,
+											durationMs,
+										}
+									: {
+											_tag: 'postToolUseFailure',
+											runId,
+											stepId,
+											iter: n,
+											harness: harnessName,
+											tool: entry.name,
+											input: entry.input,
+											error: outputSummary,
+											toolCallId: event.id,
+										},
+							);
 							return;
 						}
 						case 'result': {
@@ -453,6 +519,15 @@ const streamHarnessIter = ({
 			);
 		}
 
+		yield* dispatchHook({
+			_tag: 'stop',
+			runId,
+			stepId,
+			iter: n,
+			harness: harnessName,
+			lastAssistantMessage,
+		});
+
 		return {
 			result: { exitCode, stdout, stderr },
 			toolFailures: toolCallsFailed,
@@ -468,6 +543,8 @@ const runStep = (
 	| EventEmitter
 	| UntilEvaluator
 	| RunWorkspace
+	| HookRunner
+	| HookTransport
 	| CommandExecutor.CommandExecutor
 	| FileSystem.FileSystem
 	| Path.Path
@@ -801,6 +878,8 @@ export const runFactoryEffect = (
 	| StepLoader
 	| UntilEvaluator
 	| RunWorkspace
+	| HookRunner
+	| HookTransport
 	| FileSystem.FileSystem
 	| Path.Path
 	| CommandExecutor.CommandExecutor
@@ -960,6 +1039,8 @@ export const resumeFactoryEffect = (
 	| StepLoader
 	| UntilEvaluator
 	| RunWorkspace
+	| HookRunner
+	| HookTransport
 	| FileSystem.FileSystem
 	| Path.Path
 	| CommandExecutor.CommandExecutor

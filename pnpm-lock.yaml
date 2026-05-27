@@ -14,6 +14,15 @@ importers:
       '@factory/harness-claude-code':
         specifier: workspace:*
         version: link:packages/harness-claude-code
+      '@factory/harness-codex':
+        specifier: workspace:*
+        version: link:packages/harness-codex
+      '@factory/harness-copilot':
+        specifier: workspace:*
+        version: link:packages/harness-copilot
+      '@factory/hooks':
+        specifier: workspace:*
+        version: link:packages/hooks
     devDependencies:
       '@effect/vitest':
         specifier: ^0.29.0
@@ -221,6 +230,12 @@ importers:
       '@factory/core':
         specifier: workspace:*
         version: link:../core
+      '@factory/hooks':
+        specifier: workspace:*
+        version: link:../hooks
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.2
     devDependencies:
       typescript:
         specifier: ^5.9.2
@@ -231,6 +246,12 @@ importers:
       '@factory/core':
         specifier: workspace:*
         version: link:../core
+      '@factory/hooks':
+        specifier: workspace:*
+        version: link:../hooks
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.2
     devDependencies:
       typescript:
         specifier: ^5.9.2
@@ -241,10 +262,44 @@ importers:
       '@factory/core':
         specifier: workspace:*
         version: link:../core
+      '@factory/hooks':
+        specifier: workspace:*
+        version: link:../hooks
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.2
     devDependencies:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+
+  packages/hooks:
+    dependencies:
+      '@effect/platform':
+        specifier: ^0.96.1
+        version: 0.96.1(effect@3.21.2)
+      '@effect/platform-node':
+        specifier: ^0.106.0
+        version: 0.106.0(@effect/cluster@0.58.2(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2)
+      '@factory/core':
+        specifier: workspace:*
+        version: link:../core
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.2
+    devDependencies:
+      '@effect/vitest':
+        specifier: ^0.29.0
+        version: 0.29.0(effect@3.21.2)(vitest@4.1.5)
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.19.18
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@22.19.18)(@vitest/coverage-v8@4.1.5)(jsdom@25.0.1)(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.8.4))
 
   packages/steps-sdd: {}
 

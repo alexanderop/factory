@@ -7,6 +7,7 @@ import { NoOtelLayer, OtelLayer } from './otel.ts';
 import { ConsoleDisplay } from './services/Display.ts';
 import { callbackEventEmitter } from './services/EventEmitter.ts';
 import { harnessRegistryLayer } from './services/HarnessRegistry.ts';
+import { noopHookRunner, noopHookTransport } from './services/HookRunner.ts';
 import { LiveRunWorkspace } from './services/RunWorkspace.ts';
 import { StepLoader } from './services/StepLoader.ts';
 import { DefaultUntilEvaluator } from './services/UntilEvaluator.ts';
@@ -42,6 +43,12 @@ const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RuntimeOpts, ctx: Runt
 		? LiveRunWorkspace.resumed({ runId: ctx.runId, cwd: ctx.cwd })
 		: LiveRunWorkspace.layer({ runId: ctx.runId, cwd: ctx.cwd });
 
+	// Live hooks are injected from outside core (`@factory/hooks`) to keep the
+	// dependency direction correct; absent → no-op runner (transport resolved
+	// via `Effect.serviceOption`, so its absence is fine). Merged inside the
+	// `provideMerge(NodeContext)` so a live layer can use FileSystem/Path/exec.
+	const hookLayer = opts.hooks ?? Layer.merge(noopHookRunner.layer, noopHookTransport.layer);
+
 	return Layer.mergeAll(
 		ConsoleDisplay.layer,
 		callbackEventEmitter.layer({
@@ -52,6 +59,7 @@ const buildRuntimeLayer = (opts: FactoryOptions, runOpts: RuntimeOpts, ctx: Runt
 		StepLoader.Default,
 		DefaultUntilEvaluator.layer,
 		workspaceLayer,
+		hookLayer,
 		otelEnabled ? OtelLayer : NoOtelLayer,
 	).pipe(Layer.provideMerge(NodeContext.layer));
 };

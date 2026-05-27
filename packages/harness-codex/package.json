@@ -2,6 +2,9 @@
 	"name": "@factory/harness-codex",
 	"version": "0.0.0",
 	"private": true,
+	"bin": {
+		"factory-hook": "./src/factory-hook.ts"
+	},
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
@@ -11,7 +14,9 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@factory/core": "workspace:*"
+		"@factory/core": "workspace:*",
+		"@factory/hooks": "workspace:*",
+		"effect": "^3.21.2"
 	},
 	"devDependencies": {
 		"typescript": "^5.9.2"

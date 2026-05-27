@@ -5,6 +5,17 @@ export {
 	recordingEventEmitter,
 } from '../services/EventEmitter.ts';
 export { harnessRegistryLayer } from '../services/HarnessRegistry.ts';
+export {
+	HOOK_DECISION_ALLOW,
+	type HookEvent,
+	HookRunner,
+	type HookRunnerService,
+	HookTransport,
+	type HookTransportService,
+	noopHookRunner,
+	noopHookTransport,
+	recordingHookRunner,
+} from '../services/HookRunner.ts';
 export { InMemoryRunWorkspace } from '../services/RunWorkspace.ts';
 export { StepLoader } from '../services/StepLoader.ts';
 export { scriptedUntilEvaluator } from '../services/UntilEvaluator.ts';

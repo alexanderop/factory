@@ -28,6 +28,22 @@ export {
 } from './errors.ts';
 export { factory } from './factory.ts';
 export { formatErrorMessage, withFriendlyErrors } from './error-handler.ts';
+export { HarnessName, MIXED_HARNESS, PipelineName, RunId, StepId } from './ids.ts';
+export {
+	HOOK_DECISION_ALLOW,
+	type HookDecision,
+	type HookDecisionAction,
+	type HookEvent,
+	HookRunner,
+	type HookRunnerService,
+	type HookStepPrep,
+	HookTransport,
+	type HookTransportPrepareArgs,
+	type HookTransportService,
+	noopHookRunner,
+	noopHookTransport,
+	recordingHookRunner,
+} from './services/HookRunner.ts';
 export { recordTaggedError } from './observability.ts';
 export { resumeFactoryEffect, runFactoryEffect } from './orchestrator.ts';
 export { NoOtelLayer, OtelLayer } from './otel.ts';
