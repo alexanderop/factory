@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Ref } from 'effect';
-import type { PipelineName, RunId, StepId } from '../ids.ts';
+import type { AgentLabel, PipelineName, RunId, StepId } from '../ids.ts';
 
 export type DisplayEntry =
 	| { readonly _tag: 'runStart'; readonly pipeline: PipelineName; readonly runId: RunId }
@@ -18,6 +18,10 @@ export type DisplayEntry =
 			readonly stream: 'stdout' | 'stderr';
 			readonly line: string;
 	  }
+	| { readonly _tag: 'phase'; readonly title: string }
+	| { readonly _tag: 'agentStart'; readonly label: AgentLabel }
+	| { readonly _tag: 'agentEnd'; readonly label: AgentLabel; readonly ok: boolean }
+	| { readonly _tag: 'log'; readonly message: string }
 	| { readonly _tag: 'info'; readonly message: string }
 	| { readonly _tag: 'error'; readonly message: string };
 
@@ -32,6 +36,10 @@ export interface DisplayService {
 		stream: 'stdout' | 'stderr',
 		line: string,
 	) => Effect.Effect<void>;
+	readonly phase: (title: string) => Effect.Effect<void>;
+	readonly agentStart: (label: AgentLabel) => Effect.Effect<void>;
+	readonly agentEnd: (label: AgentLabel, ok: boolean) => Effect.Effect<void>;
+	readonly log: (message: string) => Effect.Effect<void>;
 	readonly info: (message: string) => Effect.Effect<void>;
 	readonly error: (message: string) => Effect.Effect<void>;
 }
@@ -51,6 +59,10 @@ export const ConsoleDisplay = {
 				const out = stream === 'stderr' ? console.error : console.log;
 				out(`    [${step}] ${line}`);
 			}),
+		phase: (title) => Effect.sync(() => console.log(`◆ ${title}`)),
+		agentStart: (label) => Effect.sync(() => console.log(`  → ${label}`)),
+		agentEnd: (label, ok) => Effect.sync(() => console.log(`  ${ok ? '✔' : '✖'} ${label}`)),
+		log: (message) => Effect.sync(() => console.log(`    ${message}`)),
 		info: (message) => Effect.sync(() => console.log(message)),
 		error: (message) => Effect.sync(() => console.error(message)),
 	} satisfies DisplayService),
@@ -71,6 +83,10 @@ export const SilentDisplay = {
 			stepIter: (step, iter, maxIters) => push({ _tag: 'stepIter', step, iter, maxIters }),
 			stepEnd: (step, ok) => push({ _tag: 'stepEnd', step, ok }),
 			harnessLine: (step, stream, line) => push({ _tag: 'harnessLine', step, stream, line }),
+			phase: (title) => push({ _tag: 'phase', title }),
+			agentStart: (label) => push({ _tag: 'agentStart', label }),
+			agentEnd: (label, ok) => push({ _tag: 'agentEnd', label, ok }),
+			log: (message) => push({ _tag: 'log', message }),
 			info: (message) => push({ _tag: 'info', message }),
 			error: (message) => push({ _tag: 'error', message }),
 		} satisfies DisplayService);

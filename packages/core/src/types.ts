@@ -9,9 +9,13 @@ import type {
 	StepIdleTimeoutError,
 } from './errors.ts';
 import { HarnessName, StepId } from './ids.ts';
-import type { PipelineName, RunId } from './ids.ts';
+import type { AgentLabel, AgentSeq, PipelineName, RunId } from './ids.ts';
 import { PermissionMode } from './permissionMode.ts';
 import type { HookRunner, HookTransport } from './services/HookRunner.ts';
+import type { WorkflowBody } from './workflow/runWorkflowEffect.ts';
+
+/** A programmatic workflow body — re-exported alias to keep `Factory` self-contained. */
+export type WorkflowBodyFn = WorkflowBody;
 
 export { PermissionMode };
 
@@ -184,6 +188,23 @@ export type FactoryEvent =
 			readonly runId: RunId;
 			readonly step?: StepId;
 			readonly error: unknown;
+	  }
+	// ---- programmatic workflow events (carry seq/label, not step) ----
+	| { readonly type: 'phase.start'; readonly runId: RunId; readonly title: string }
+	| {
+			readonly type: 'agent.start';
+			readonly runId: RunId;
+			readonly seq: AgentSeq;
+			readonly label: AgentLabel;
+			readonly harness: HarnessName;
+			readonly phase?: string;
+	  }
+	| {
+			readonly type: 'agent.end';
+			readonly runId: RunId;
+			readonly seq: AgentSeq;
+			readonly label: AgentLabel;
+			readonly ok: boolean;
 	  };
 
 export interface FactoryOptions<Names extends string = string> {
@@ -264,6 +285,35 @@ export interface ReviewSpec<Names extends string = string> {
 
 export type PipelineEntry = StepEntry | ReviewEntry;
 
+export interface WorkflowRunOptions {
+	readonly cwd?: string;
+	readonly args?: Record<string, unknown>;
+	readonly budget?: number;
+	readonly permissions?: PermissionMode;
+	readonly idleTimeoutMs?: number;
+	readonly otel?: boolean;
+	readonly onStep?: (event: FactoryEvent) => void;
+	readonly onError?: (event: Extract<FactoryEvent, { type: 'error' }>) => void;
+}
+
+export interface WorkflowResumeOptions {
+	readonly runId: RunId;
+	readonly cwd?: string;
+	readonly args?: Record<string, unknown>;
+	readonly budget?: number;
+	readonly permissions?: PermissionMode;
+	readonly otel?: boolean;
+}
+
+/** Terminal returned by `factory(...).workflow(name, body)`. Separate from the
+ *  declarative `run`/`resume` so the builder's entries array is never mutated. */
+export interface WorkflowHandle {
+	readonly run: (options?: WorkflowRunOptions) => Promise<void>;
+	readonly runEffect: (options?: WorkflowRunOptions) => Effect.Effect<void, FactoryError>;
+	readonly resume: (options: WorkflowResumeOptions) => Promise<void>;
+	readonly resumeEffect: (options: WorkflowResumeOptions) => Effect.Effect<void, FactoryError>;
+}
+
 export interface Factory<Names extends string = string, StepIds extends string = never> {
 	readonly name: string;
 	readonly step: <Id extends string>(
@@ -279,4 +329,9 @@ export interface Factory<Names extends string = string, StepIds extends string =
 	readonly runEffect: (options: RunOptions) => Effect.Effect<void, FactoryError>;
 	readonly resume: (options: ResumeOptions) => Promise<void>;
 	readonly resumeEffect: (options: ResumeOptions) => Effect.Effect<void, FactoryError>;
+	/** Programmatic, deterministic orchestration entrypoint. Shares the same
+	 *  runtime layer (workspace, events, display, OTel, harness registry, hooks)
+	 *  as the declarative path but runs an arbitrary Effect body instead of the
+	 *  step/review pipeline. */
+	readonly workflow: (name: string, body: WorkflowBodyFn) => WorkflowHandle;
 }

@@ -27,7 +27,12 @@ import {
 	type HarnessSpawnError,
 	type RunRecordingError,
 } from './errors.ts';
-import { emitAndRecord, factoryHarnessEnv, resolvePermissions } from './pipelineHelpers.ts';
+import {
+	emitAndRecord,
+	factoryHarnessEnv,
+	resolveHarnessName,
+	resolvePermissions,
+} from './pipelineHelpers.ts';
 import { runReview } from './review/runReview.ts';
 import { planResume, readStep, type ResumePlan } from './services/runManifest.ts';
 import { harnessOtelEnv } from './harnessOtelEnv.ts';
@@ -101,14 +106,43 @@ const resolvePrdContent = (prd: string, cwd: string) =>
 		);
 	});
 
-interface StreamHarnessArgs {
+/**
+ * Identity-agnostic recording target for a single harness iteration. Decouples
+ * `streamHarnessIter` from the flat `stepOrd` integer so both the declarative
+ * step path (`stepIterTarget`) and the programmatic `agent()` path
+ * (`agentIterTarget`) can drive the same kernel. `label` is the human-readable
+ * id used for display + events; `n` is the iteration number used in spans.
+ */
+export interface IterTarget {
+	readonly label: StepId;
+	readonly n: number;
+	readonly recordEvent: (event: FactoryEvent) => Effect.Effect<void, RunRecordingError>;
+	readonly recordStdout: (text: string) => Effect.Effect<void, RunRecordingError>;
+	readonly recordStderr: (text: string) => Effect.Effect<void, RunRecordingError>;
+	readonly onResultTokens?: (output: number) => Effect.Effect<void>;
+}
+
+/** Build an `IterTarget` that forwards byte-for-byte to the existing
+ *  `stepOrd`-keyed workspace methods, keeping the declarative path unchanged. */
+export const stepIterTarget = (
+	workspace: RunWorkspaceService,
+	label: StepId,
+	stepOrd: number,
+	n: number,
+): IterTarget => ({
+	label,
+	n,
+	recordEvent: (event) => workspace.appendIterEvent(stepOrd, n, event),
+	recordStdout: (text) => workspace.appendStdout(stepOrd, n, text),
+	recordStderr: (text) => workspace.appendStderr(stepOrd, n, text),
+});
+
+export interface StreamHarnessArgs {
 	readonly runId: RunId;
 	readonly harness: Harness;
 	readonly opts: ExecOpts;
-	readonly stepId: StepId;
 	readonly harnessName: HarnessName;
-	readonly stepOrd: number;
-	readonly n: number;
+	readonly target: IterTarget;
 	readonly workspace: RunWorkspaceService;
 	readonly emitter: EventEmitterService;
 	readonly display: DisplayService;
@@ -121,21 +155,20 @@ interface ToolSpanEntry {
 	readonly input: unknown;
 }
 
-interface IterStreamResult {
+export interface IterStreamResult {
 	readonly result: ExecResult;
 	readonly toolFailures: number;
+	readonly lastAssistantMessage: string;
 }
 
 type ExitReason = 'assistant_end' | 'idle_timeout' | 'error' | 'subprocess_exit_nonzero';
 
-const streamHarnessIter = ({
+export const streamHarnessIter = ({
 	runId,
 	harness,
 	opts,
-	stepId,
 	harnessName,
-	stepOrd,
-	n,
+	target,
 	workspace,
 	emitter,
 	display,
@@ -145,6 +178,8 @@ const streamHarnessIter = ({
 	CommandExecutor.CommandExecutor | HookRunner | HookTransport | FileSystem.FileSystem | Path.Path
 > =>
 	Effect.gen(function* () {
+		const stepId = target.label;
+		const n = target.n;
 		const stdoutLines: string[] = [];
 		const stderrLines: string[] = [];
 		const toolSpans = new Map<string, ToolSpanEntry>();
@@ -202,14 +237,10 @@ const streamHarnessIter = ({
 		};
 
 		const persistAndEmit = (event: FactoryEvent) =>
-			Effect.all(
-				[
-					emitter.emit(event),
-					workspace.appendEvent(event),
-					workspace.appendIterEvent(stepOrd, n, event),
-				],
-				{ concurrency: 'unbounded', discard: true },
-			);
+			Effect.all([emitter.emit(event), workspace.appendEvent(event), target.recordEvent(event)], {
+				concurrency: 'unbounded',
+				discard: true,
+			});
 
 		const annotateExitReasonOnError = <A, E extends { readonly _tag: string }, R>(
 			eff: Effect.Effect<A, E, R>,
@@ -241,14 +272,14 @@ const streamHarnessIter = ({
 						case 'stdout': {
 							stdoutLines.push(event.line);
 							bytesStdout += Buffer.byteLength(event.line, 'utf8') + 1;
-							yield* workspace.appendStdout(stepOrd, n, `${event.line}\n`);
+							yield* target.recordStdout(`${event.line}\n`);
 							yield* display.harnessLine(stepId, 'stdout', event.line);
 							return;
 						}
 						case 'stderr': {
 							stderrLines.push(event.line);
 							bytesStderr += Buffer.byteLength(event.line, 'utf8') + 1;
-							yield* workspace.appendStderr(stepOrd, n, `${event.line}\n`);
+							yield* target.recordStderr(`${event.line}\n`);
 							yield* display.harnessLine(stepId, 'stderr', event.line);
 							return;
 						}
@@ -261,7 +292,7 @@ const streamHarnessIter = ({
 							bytesStdout += Buffer.byteLength(event.text, 'utf8') + 1;
 							assistantMessageCount += 1;
 							lastAssistantMessage = event.text;
-							yield* workspace.appendStdout(stepOrd, n, `${event.text}\n`);
+							yield* target.recordStdout(`${event.text}\n`);
 							yield* display.harnessLine(stepId, 'stdout', event.text);
 							yield* Metric.increment(assistantMessagesTotal);
 							const ts = yield* Clock.currentTimeMillis;
@@ -444,6 +475,7 @@ const streamHarnessIter = ({
 									Effect.tagMetrics('model', model),
 								);
 							}
+							if (target.onResultTokens) yield* target.onResultTokens(tokensOutput);
 							yield* persistAndEmit({
 								type: 'iter.result',
 								runId,
@@ -531,6 +563,7 @@ const streamHarnessIter = ({
 		return {
 			result: { exitCode, stdout, stderr },
 			toolFailures: toolCallsFailed,
+			lastAssistantMessage,
 		} satisfies IterStreamResult;
 	});
 
@@ -618,9 +651,7 @@ const runStep = (
 						permissions,
 						env: factoryHarnessEnv(workspace.runDir, cwd, runId),
 					},
-					stepId,
-					stepOrd,
-					n: i,
+					target: stepIterTarget(workspace, stepId, stepOrd, i),
 					workspace,
 					emitter,
 					display,
@@ -791,10 +822,11 @@ const runStepLoop = (args: StepLoopArgs) =>
 						},
 					}),
 				);
-				const harnessName =
-					(entry.options.harness ? HarnessName.make(entry.options.harness) : undefined) ??
-					loaded.frontmatter.harness ??
-					defaultHarness;
+				const harnessName = resolveHarnessName(
+					entry.options.harness,
+					loaded.frontmatter.harness,
+					defaultHarness,
+				);
 				if (!harnessName) {
 					return yield* Effect.fail(
 						new MissingHarnessError({

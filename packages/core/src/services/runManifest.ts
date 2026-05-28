@@ -1,7 +1,7 @@
 import { FileSystem } from '@effect/platform';
 import { Effect, Schema } from 'effect';
 import { ResumeMismatchError, RunRecordingError } from '../errors.ts';
-import { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
+import { AgentLabel, AgentSeq, HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
 
 export const RunStatus = Schema.Literal('running', 'ok', 'error');
 export type RunStatus = typeof RunStatus.Type;
@@ -49,6 +49,22 @@ export const StepRecord = Schema.Struct({
 });
 export type StepRecord = typeof StepRecord.Type;
 
+/** Per-agent manifest for programmatic `.workflow()` runs. Lives under
+ *  `agents/<seq>-<label>/agent.json`, parallel to `steps/<ord>-<id>/step.json`. */
+export const AgentRecord = Schema.Struct({
+	seq: AgentSeq,
+	label: AgentLabel,
+	promptHash: Schema.String,
+	optsHash: Schema.String,
+	harness: HarnessName,
+	startedAt: Schema.Number,
+	endedAt: Schema.optional(Schema.Number),
+	status: StepStatus,
+	iters: Schema.Array(IterRecord),
+	output: Schema.optional(Schema.Unknown),
+});
+export type AgentRecord = typeof AgentRecord.Type;
+
 export const RunRecord = Schema.Struct({
 	id: RunId,
 	pipeline: PipelineName,
@@ -67,6 +83,7 @@ export type RunRecord = typeof RunRecord.Type;
 export const RunRecordJson = Schema.parseJson(RunRecord);
 export const StepRecordJson = Schema.parseJson(StepRecord);
 export const IterRecordJson = Schema.parseJson(IterRecord);
+export const AgentRecordJson = Schema.parseJson(AgentRecord);
 
 const decodeRunInternal = Schema.decodeUnknown(RunRecordJson);
 const encodeRunInternal = Schema.encode(RunRecordJson);
@@ -74,6 +91,8 @@ const decodeStepInternal = Schema.decodeUnknown(StepRecordJson);
 const encodeStepInternal = Schema.encode(StepRecordJson);
 const decodeIterInternal = Schema.decodeUnknown(IterRecordJson);
 const encodeIterInternal = Schema.encode(IterRecordJson);
+const decodeAgentInternal = Schema.decodeUnknown(AgentRecordJson);
+const encodeAgentInternal = Schema.encode(AgentRecordJson);
 
 const toRecordingError =
 	(message: string, path?: string) =>
@@ -100,6 +119,12 @@ export const decodeIter = (json: string, path?: string) =>
 
 export const encodeIter = (value: IterRecord) =>
 	encodeIterInternal(value).pipe(Effect.mapError(toRecordingError('failed to encode iter')));
+
+export const decodeAgent = (json: string, path?: string) =>
+	decodeAgentInternal(json).pipe(Effect.mapError(toRecordingError('failed to decode agent', path)));
+
+export const encodeAgent = (value: AgentRecord) =>
+	encodeAgentInternal(value).pipe(Effect.mapError(toRecordingError('failed to encode agent')));
 
 export interface AtomicWriteDeps {
 	readonly rename?: (oldPath: string, newPath: string) => Effect.Effect<void, RunRecordingError>;
@@ -130,6 +155,9 @@ export const writeStep = (path: string, value: StepRecord) =>
 export const writeIter = (path: string, value: IterRecord) =>
 	encodeIter(value).pipe(Effect.flatMap((json) => atomicWriteString(path, json)));
 
+export const writeAgent = (path: string, value: AgentRecord) =>
+	encodeAgent(value).pipe(Effect.flatMap((json) => atomicWriteString(path, json)));
+
 export const readRun = (path: string) =>
 	Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem;
@@ -155,6 +183,37 @@ export const readIter = (path: string) =>
 			.readFileString(path)
 			.pipe(Effect.mapError(toRecordingError(`failed to read ${path}`, path)));
 		return yield* decodeIter(text, path);
+	});
+
+export const readAgent = (path: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const text = yield* fs
+			.readFileString(path)
+			.pipe(Effect.mapError(toRecordingError(`failed to read ${path}`, path)));
+		return yield* decodeAgent(text, path);
+	});
+
+/**
+ * Read a `$FACTORY_STEP_OUTPUT` JSON file and decode it against `schema`. Used
+ * by the programmatic `agent({ schema })` path. Decode/IO failures surface as
+ * `RunRecordingError` (already in the `FactoryError` union) tagged with `label`.
+ */
+export const readOutput = <A, I>(
+	path: string,
+	schema: Schema.Schema<A, I>,
+	label: string,
+): Effect.Effect<A, RunRecordingError, FileSystem.FileSystem> =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const text = yield* fs
+			.readFileString(path)
+			.pipe(
+				Effect.mapError(toRecordingError(`agent '${label}': failed to read output ${path}`, path)),
+			);
+		return yield* Schema.decodeUnknown(Schema.parseJson(schema))(text).pipe(
+			Effect.mapError(toRecordingError(`agent '${label}': failed to decode output`, path)),
+		);
 	});
 
 export type ResumePlan =

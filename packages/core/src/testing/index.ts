@@ -20,6 +20,7 @@ export { InMemoryRunWorkspace } from '../services/RunWorkspace.ts';
 export { StepLoader } from '../services/StepLoader.ts';
 export { scriptedUntilEvaluator } from '../services/UntilEvaluator.ts';
 export * from './factories.ts';
+export { makeWorkflowRig, type MakeWorkflowRigOptions, type WorkflowRig } from './workflowRig.ts';
 export { assertHelpSnapshot, type HelpSnapshotArgs } from './helpSnapshot.ts';
 export {
 	getFinishedSpans,

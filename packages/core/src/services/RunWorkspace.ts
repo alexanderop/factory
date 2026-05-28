@@ -1,16 +1,28 @@
 import { FileSystem, Path } from '@effect/platform';
 import { Clock, Context, Effect, Layer, Ref } from 'effect';
 import { RunRecordingError } from '../errors.ts';
-import type { HarnessName, PipelineName, RunId, StepId } from '../ids.ts';
+import {
+	type AgentLabel,
+	type AgentSeq,
+	agentDirName,
+	type HarnessName,
+	type PipelineName,
+	type RunId,
+	type StepId,
+} from '../ids.ts';
 import type { FactoryEvent } from '../types.ts';
 import {
+	type AgentRecord,
 	type IterRecord,
+	readAgent,
 	readRun,
 	readStep,
 	type RoleRecord,
 	type RoleStatus,
 	type RunRecord,
 	type StepRecord,
+	type StepStatus,
+	writeAgent as writeAgentEffect,
 	writeIter as writeIterEffect,
 	writeRun as writeRunEffect,
 	writeStep as writeStepEffect,
@@ -62,6 +74,9 @@ export interface IterPaths {
 	readonly stderrPath: string;
 	readonly promptPath: string;
 	readonly eventsPath: string;
+	/** Where the harness writes structured output when `$FACTORY_STEP_OUTPUT` is
+	 *  set (programmatic `agent({ schema })`). Populated for every iter dir. */
+	readonly outputPath: string;
 }
 
 export interface IterEndArgs {
@@ -92,6 +107,38 @@ export interface RoleEndArgs {
 	readonly errorTag?: string;
 }
 
+export interface AgentStartArgs {
+	readonly seq: AgentSeq;
+	readonly label: AgentLabel;
+	readonly promptHash: string;
+	readonly optsHash: string;
+	readonly harness: HarnessName;
+}
+
+export interface AgentIterStartArgs {
+	readonly seq: AgentSeq;
+	readonly n: number;
+	readonly prompt: string;
+}
+
+export interface AgentIterEndArgs {
+	readonly seq: AgentSeq;
+	readonly n: number;
+	readonly exitCode: number;
+}
+
+export interface AgentEndArgs {
+	readonly seq: AgentSeq;
+	readonly status: StepStatus;
+	readonly output?: unknown;
+}
+
+/** An agent recorded as `'ok'` whose `(promptHash, optsHash)` match the current
+ *  call — eligible for resume short-circuit. */
+export interface ResumableAgent {
+	readonly record: AgentRecord;
+}
+
 export interface RunWorkspaceService {
 	readonly runId: RunId;
 	readonly runDir: string;
@@ -120,6 +167,35 @@ export interface RunWorkspaceService {
 		n: number,
 		event: FactoryEvent,
 	) => Effect.Effect<void, RunRecordingError>;
+	// ---- programmatic agent() layout (agents/<seq>-<label>/), additive ----
+	readonly recordAgentStart: (args: AgentStartArgs) => Effect.Effect<void, RunRecordingError>;
+	readonly recordAgentIterStart: (
+		args: AgentIterStartArgs,
+	) => Effect.Effect<IterPaths, RunRecordingError>;
+	readonly recordAgentIterEnd: (args: AgentIterEndArgs) => Effect.Effect<void, RunRecordingError>;
+	readonly recordAgentEnd: (args: AgentEndArgs) => Effect.Effect<void, RunRecordingError>;
+	readonly appendAgentStdout: (
+		seq: AgentSeq,
+		n: number,
+		text: string,
+	) => Effect.Effect<void, RunRecordingError>;
+	readonly appendAgentStderr: (
+		seq: AgentSeq,
+		n: number,
+		text: string,
+	) => Effect.Effect<void, RunRecordingError>;
+	readonly appendAgentIterEvent: (
+		seq: AgentSeq,
+		n: number,
+		event: FactoryEvent,
+	) => Effect.Effect<void, RunRecordingError>;
+	/** Resume short-circuit lookup: returns the recorded agent at `seq` iff it
+	 *  completed `'ok'` and its hashes match — otherwise `undefined` (re-run). */
+	readonly findResumableAgent: (
+		seq: AgentSeq,
+		promptHash: string,
+		optsHash: string,
+	) => Effect.Effect<ResumableAgent | undefined, RunRecordingError>;
 }
 
 export class RunWorkspace extends Context.Tag('@factory/RunWorkspace')<
@@ -138,11 +214,18 @@ const toRecordingError =
 		});
 
 const iterKey = (stepOrd: number, n: number): string => `${stepOrd}-${n}`;
+const agentIterKey = (seq: number, n: number): string => `agent-${seq}-${n}`;
 
 interface StepEntry {
 	readonly dir: string;
 	readonly path: string;
 	readonly record: StepRecord;
+}
+
+interface AgentEntry {
+	readonly dir: string;
+	readonly path: string;
+	readonly record: AgentRecord;
 }
 
 interface MakeServiceArgs {
@@ -153,6 +236,7 @@ interface MakeServiceArgs {
 	readonly hydrated?: {
 		readonly runRecord: RunRecord;
 		readonly stepEntries: ReadonlyArray<StepEntry>;
+		readonly agentEntries?: ReadonlyArray<AgentEntry>;
 	};
 }
 
@@ -180,12 +264,19 @@ const makeService = ({
 		const stepEntriesRef = yield* Ref.make<ReadonlyMap<number, StepEntry>>(
 			new Map(hydrated?.stepEntries.map((e) => [e.record.ord, e] as const) ?? []),
 		);
+		// Dedicated map for the programmatic agent layout — never reuse
+		// stepEntriesRef so the declarative path can't be clobbered.
+		const agentEntriesRef = yield* Ref.make<ReadonlyMap<number, AgentEntry>>(
+			new Map(hydrated?.agentEntries?.map((e) => [e.record.seq, e] as const) ?? []),
+		);
 		const iterPathsRef = yield* Ref.make<ReadonlyMap<string, IterPaths>>(new Map());
 
 		const provideFs = Effect.provideService(FileSystem.FileSystem, fs);
 		const writeRun = (p: string, value: RunRecord) => writeRunEffect(p, value).pipe(provideFs);
 		const writeStep = (p: string, value: StepRecord) => writeStepEffect(p, value).pipe(provideFs);
 		const writeIter = (p: string, value: IterRecord) => writeIterEffect(p, value).pipe(provideFs);
+		const writeAgent = (p: string, value: AgentRecord) =>
+			writeAgentEffect(p, value).pipe(provideFs);
 
 		const ensureDir = (dir: string) =>
 			fs
@@ -243,6 +334,45 @@ const makeService = ({
 						return Effect.fail(
 							new RunRecordingError({
 								message: `cannot append ${kind}: iter ${stepOrd}/${n} not started`,
+							}),
+						);
+					}
+					const file = kind === 'stdout' ? paths.stdoutPath : paths.stderrPath;
+					return fs
+						.writeFileString(file, text, { flag: 'a' })
+						.pipe(Effect.mapError(toRecordingError(`failed to append ${kind}`, file)));
+				}),
+			);
+
+		// ---- agent-layout helpers (mirror the step helpers, keyed by AgentSeq) ----
+		const persistAgent = (entry: AgentEntry) => writeAgent(entry.path, entry.record);
+
+		const requireAgent = (
+			seq: AgentSeq,
+			op: string,
+		): Effect.Effect<AgentEntry, RunRecordingError> =>
+			Ref.get(agentEntriesRef).pipe(
+				Effect.flatMap((entries) => {
+					const entry = entries.get(seq);
+					return entry === undefined
+						? Effect.fail(
+								new RunRecordingError({ message: `cannot ${op}: agent ${seq} not started` }),
+							)
+						: Effect.succeed(entry);
+				}),
+			);
+
+		const replaceAgent = (entry: AgentEntry): Effect.Effect<void> =>
+			Ref.update(agentEntriesRef, (entries) => new Map(entries).set(entry.record.seq, entry));
+
+		const appendAgentLog = (kind: 'stdout' | 'stderr', seq: AgentSeq, n: number, text: string) =>
+			Ref.get(iterPathsRef).pipe(
+				Effect.flatMap((map) => {
+					const paths = map.get(agentIterKey(seq, n));
+					if (!paths) {
+						return Effect.fail(
+							new RunRecordingError({
+								message: `cannot append ${kind}: agent iter ${seq}/${n} not started`,
 							}),
 						);
 					}
@@ -356,6 +486,7 @@ const makeService = ({
 						stderrPath: path.join(iterDir, 'stderr.log'),
 						promptPath: path.join(iterDir, 'prompt.md'),
 						eventsPath: path.join(iterDir, 'events.jsonl'),
+						outputPath: path.join(iterDir, 'output.json'),
 					};
 					yield* Ref.update(iterPathsRef, (m) =>
 						new Map(m).set(iterKey(args.stepOrd, args.n), paths),
@@ -496,6 +627,133 @@ const makeService = ({
 						return appendLine(paths.eventsPath, JSON.stringify(event));
 					}),
 				),
+
+			recordAgentStart: (args) =>
+				roleMutex.withPermits(1)(
+					Effect.gen(function* () {
+						const dir = path.join(runDir, agentDirName(args.seq, args.label));
+						yield* ensureDir(dir);
+						const startedAt = yield* Clock.currentTimeMillis;
+						const record: AgentRecord = {
+							seq: args.seq,
+							label: args.label,
+							promptHash: args.promptHash,
+							optsHash: args.optsHash,
+							harness: args.harness,
+							startedAt,
+							status: 'running',
+							iters: [],
+						};
+						const entry: AgentEntry = { dir, path: path.join(dir, 'agent.json'), record };
+						yield* replaceAgent(entry);
+						yield* persistAgent(entry);
+					}),
+				),
+
+			recordAgentIterStart: (args) =>
+				Effect.gen(function* () {
+					const entry = yield* requireAgent(args.seq, `start iter ${args.seq}/${args.n}`);
+					const iterDir = path.join(entry.dir, 'iters', pad(args.n, 3));
+					yield* ensureDir(iterDir);
+					const paths: IterPaths = {
+						iterDir,
+						stdoutPath: path.join(iterDir, 'stdout.log'),
+						stderrPath: path.join(iterDir, 'stderr.log'),
+						promptPath: path.join(iterDir, 'prompt.md'),
+						eventsPath: path.join(iterDir, 'events.jsonl'),
+						outputPath: path.join(iterDir, 'output.json'),
+					};
+					yield* Ref.update(iterPathsRef, (m) =>
+						new Map(m).set(agentIterKey(args.seq, args.n), paths),
+					);
+					yield* writeFile(paths.promptPath, args.prompt);
+					const startedAt = yield* Clock.currentTimeMillis;
+					const iter: IterRecord = { n: args.n, startedAt };
+					const next: AgentEntry = {
+						...entry,
+						record: { ...entry.record, iters: [...entry.record.iters, iter] },
+					};
+					yield* replaceAgent(next);
+					yield* persistAgent(next);
+					return paths;
+				}),
+
+			recordAgentIterEnd: (args) =>
+				Effect.gen(function* () {
+					const entry = yield* requireAgent(args.seq, `end iter ${args.seq}/${args.n}`);
+					const idx = entry.record.iters.findIndex((it) => it.n === args.n);
+					const existing = idx < 0 ? undefined : entry.record.iters[idx];
+					if (existing === undefined) {
+						return yield* Effect.fail(
+							new RunRecordingError({
+								message: `cannot end iter ${args.seq}/${args.n}: iter not started`,
+							}),
+						);
+					}
+					const endedAt = yield* Clock.currentTimeMillis;
+					const updatedIter: IterRecord = {
+						...existing,
+						n: args.n,
+						endedAt,
+						exitCode: args.exitCode,
+					};
+					const iters = entry.record.iters.map((it, i) => (i === idx ? updatedIter : it));
+					const next: AgentEntry = { ...entry, record: { ...entry.record, iters } };
+					yield* replaceAgent(next);
+					yield* persistAgent(next);
+				}),
+
+			recordAgentEnd: (args) =>
+				Effect.gen(function* () {
+					const entry = yield* requireAgent(args.seq, 'end agent');
+					const endedAt = yield* Clock.currentTimeMillis;
+					const next: AgentEntry = {
+						...entry,
+						record: {
+							...entry.record,
+							endedAt,
+							status: args.status,
+							...(args.output === undefined ? {} : { output: args.output }),
+						},
+					};
+					yield* replaceAgent(next);
+					yield* persistAgent(next);
+				}),
+
+			appendAgentStdout: (seq, n, text) => appendAgentLog('stdout', seq, n, text),
+
+			appendAgentStderr: (seq, n, text) => appendAgentLog('stderr', seq, n, text),
+
+			appendAgentIterEvent: (seq, n, event) =>
+				Ref.get(iterPathsRef).pipe(
+					Effect.flatMap((map) => {
+						const paths = map.get(agentIterKey(seq, n));
+						if (!paths) {
+							return Effect.fail(
+								new RunRecordingError({
+									message: `cannot append agent iter event: agent iter ${seq}/${n} not started`,
+								}),
+							);
+						}
+						return appendLine(paths.eventsPath, JSON.stringify(event));
+					}),
+				),
+
+			findResumableAgent: (seq, promptHash, optsHash) =>
+				Ref.get(agentEntriesRef).pipe(
+					Effect.map((entries) => {
+						const entry = entries.get(seq);
+						if (
+							entry === undefined ||
+							entry.record.status !== 'ok' ||
+							entry.record.promptHash !== promptHash ||
+							entry.record.optsHash !== optsHash
+						) {
+							return;
+						}
+						return { record: entry.record } satisfies ResumableAgent;
+					}),
+				),
 		};
 	});
 
@@ -553,6 +811,36 @@ const hydrateStepEntries = (runDir: string) =>
 		return sorted;
 	});
 
+const hydrateAgentEntries = (runDir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const agentsRoot = path.join(runDir, 'agents');
+		const exists = yield* fs
+			.exists(agentsRoot)
+			.pipe(Effect.mapError(toRecordingError(`failed to stat ${agentsRoot}`, agentsRoot)));
+		const empty: ReadonlyArray<AgentEntry> = [];
+		if (!exists) return empty;
+		const subdirs = yield* fs
+			.readDirectory(agentsRoot)
+			.pipe(Effect.mapError(toRecordingError(`failed to read ${agentsRoot}`, agentsRoot)));
+		const entries: AgentEntry[] = [];
+		for (const name of subdirs) {
+			const dir = path.join(agentsRoot, name);
+			const agentJsonPath = path.join(dir, 'agent.json');
+			const has = yield* fs
+				.exists(agentJsonPath)
+				.pipe(Effect.mapError(toRecordingError(`failed to stat ${agentJsonPath}`, agentJsonPath)));
+			if (!has) continue;
+			const record = yield* readAgent(agentJsonPath);
+			entries.push({ dir, path: agentJsonPath, record });
+		}
+		const sorted: ReadonlyArray<AgentEntry> = entries.toSorted(
+			(a, b) => a.record.seq - b.record.seq,
+		);
+		return sorted;
+	});
+
 const buildResumedWorkspace = (runId: RunId, runDir: string) =>
 	Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem;
@@ -560,12 +848,13 @@ const buildResumedWorkspace = (runId: RunId, runDir: string) =>
 		const runJsonPath = path.join(runDir, 'run.json');
 		const runRecord = yield* readRun(runJsonPath);
 		const stepEntries = yield* hydrateStepEntries(runDir);
+		const agentEntries = yield* hydrateAgentEntries(runDir);
 		return yield* makeService({
 			runId,
 			runDir,
 			fs,
 			path,
-			hydrated: { runRecord, stepEntries },
+			hydrated: { runRecord, stepEntries, agentEntries },
 		});
 	});
 

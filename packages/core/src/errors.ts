@@ -105,6 +105,14 @@ export class RoleLoadError extends Data.TaggedError('RoleLoadError')<{
 	readonly role: string;
 }> {}
 
+/** A programmatic `agent()` call was attempted after the workflow's output-token
+ *  budget was already spent. Soft ceiling: enforced at agent entry, no rollback. */
+export class BudgetExhaustedError extends Data.TaggedError('BudgetExhaustedError')<{
+	readonly message: string;
+	readonly spentTokens: number;
+	readonly budget: number;
+}> {}
+
 export type FactoryError =
 	| StepLoadError
 	| HarnessNotFoundError
@@ -121,4 +129,5 @@ export type FactoryError =
 	| CapabilityMismatchError
 	| ResumeMismatchError
 	| ResumeUnavailableError
-	| RoleLoadError;
+	| RoleLoadError
+	| BudgetExhaustedError;

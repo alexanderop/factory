@@ -50,6 +50,10 @@ Current patterns:
   `FactoryError` union.
 - `testing-effect.md` — `it.effect` vs plain vitest, the `testing/` test
   doubles, `Ref`-based capture, asserting on `Exit`.
+- `programmatic-orchestration.md` — the `agent()` / `parallel()` / `pipeline()`
+  primitives and the `.workflow()` entrypoint that sit alongside the declarative
+  builder; the `agents/<seq>-<label>/` identity model, the budget soft-ceiling,
+  and the resume determinism contract.
 
 If a pattern is missing for the task at hand:
 

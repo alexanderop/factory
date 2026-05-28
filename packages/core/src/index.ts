@@ -9,6 +9,7 @@ export {
 	StepRequirements,
 } from './capabilities.ts';
 export {
+	BudgetExhaustedError,
 	ConfigLoadError,
 	type FactoryError,
 	HarnessExecError,
@@ -28,7 +29,48 @@ export {
 } from './errors.ts';
 export { factory } from './factory.ts';
 export { formatErrorMessage, withFriendlyErrors } from './error-handler.ts';
-export { HarnessName, MIXED_HARNESS, PipelineName, RunId, StepId } from './ids.ts';
+export {
+	AgentLabel,
+	AgentSeq,
+	agentDirName,
+	HarnessName,
+	MIXED_HARNESS,
+	PipelineName,
+	RunId,
+	slugify,
+	StepId,
+} from './ids.ts';
+export {
+	AgentSequence,
+	type AgentSequenceService,
+	layer as agentSequenceLayer,
+	resumedLayer as agentSequenceResumedLayer,
+} from './services/AgentSequence.ts';
+export {
+	type AgentFn,
+	type AgentOptions,
+	type AgentRequirements,
+	makeAgent,
+} from './workflow/agent.ts';
+export {
+	hashAgentInput,
+	maxRecordedSeq,
+	type NormalizedAgentOpts,
+	readRecordedAgents,
+} from './workflow/agentManifest.ts';
+export { type ConcurrencyOptions, parallel, pipeline } from './workflow/combinators.ts';
+export {
+	WorkflowContext,
+	type WorkflowContextConfig,
+	type WorkflowContextService,
+	workflowContextLayer,
+} from './workflow/context.ts';
+export {
+	runWorkflowEffect,
+	type WorkflowBody,
+	type WorkflowCtx,
+	type WorkflowRunContext,
+} from './workflow/runWorkflowEffect.ts';
 export {
 	HOOK_DECISION_ALLOW,
 	type HookDecision,
@@ -67,11 +109,16 @@ export {
 	type HarnessRegistryService,
 } from './services/HarnessRegistry.ts';
 export {
+	type AgentEndArgs,
+	type AgentIterEndArgs,
+	type AgentIterStartArgs,
+	type AgentStartArgs,
 	InMemoryRunWorkspace,
 	type IterEndArgs,
 	type IterPaths,
 	type IterStartArgs,
 	LiveRunWorkspace,
+	type ResumableAgent,
 	type RunEndArgs,
 	type RunResumeArgs,
 	type RunStartArgs,
@@ -81,8 +128,11 @@ export {
 	type StepStartArgs,
 } from './services/RunWorkspace.ts';
 export {
+	type AgentRecord,
 	planResume,
 	type PipelineStepRef,
+	readAgent,
+	readOutput,
 	readRun,
 	readStep,
 	type ResumePlan,
@@ -123,4 +173,8 @@ export type {
 	StepEntry,
 	StepFrontmatter,
 	StepOptions,
+	WorkflowBodyFn,
+	WorkflowHandle,
+	WorkflowResumeOptions,
+	WorkflowRunOptions,
 } from './types.ts';
